@@ -195,7 +195,7 @@ func (p *TCPPeer) handleQueues() {
 	var p2pSkipCounter uint32
 	const p2pSkipDivisor = 4
 
-	var writeTimeout = time.Duration(p.server.chain.GetConfig().SecondsPerBlock) * time.Second
+	//var writeTimeout = time.Duration(p.server.chain.GetConfig().SecondsPerBlock) * time.Second
 	for {
 		var msg []byte
 
@@ -229,10 +229,10 @@ func (p *TCPPeer) handleQueues() {
 			case msg = <-p.sendQ:
 			}
 		}
-		err = p.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		if err != nil {
-			break
-		}
+		// err = p.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		// if err != nil {
+		// 	break
+		// }
 		_, err = p.conn.Write(msg)
 		if err != nil {
 			break

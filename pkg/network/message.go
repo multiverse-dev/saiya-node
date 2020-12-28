@@ -86,6 +86,8 @@ const (
 
 	// others
 	CMDAlert CommandType = 0x40
+
+	CMDTxMany = 0x41
 )
 
 // NewMessage returns a new message with the given payload. It's intended to be
@@ -161,6 +163,8 @@ func (m *Message) decodePayload() error {
 		p = &payload.Headers{Network: m.Network, StateRootInHeader: m.StateRootInHeader}
 	case CMDTX:
 		p = &transaction.Transaction{Network: m.Network}
+	case CMDTxMany:
+		p = &payload.Transactions{Network: m.Network}
 	case CMDMerkleBlock:
 		p = &payload.MerkleBlock{Network: m.Network}
 	case CMDPing, CMDPong:

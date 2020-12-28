@@ -18,6 +18,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/core/blockchainer"
 	"github.com/nspcc-dev/neo-go/pkg/core/mempool"
 	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
+	"github.com/nspcc-dev/neo-go/pkg/io"
 	"github.com/nspcc-dev/neo-go/pkg/network/capability"
 	"github.com/nspcc-dev/neo-go/pkg/network/payload"
 	"github.com/nspcc-dev/neo-go/pkg/util"
@@ -587,6 +588,7 @@ func (s *Server) handleMempoolCmd(p Peer) error {
 // handleInvCmd processes the received inventory.
 func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 	var notFound []util.Uint256
+	var txs []*transaction.Transaction
 	for _, hash := range inv.Hashes {
 		var msg *Message
 
@@ -594,7 +596,7 @@ func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 		case payload.TXType:
 			tx, _, err := s.chain.GetTransaction(hash)
 			if err == nil {
-				msg = NewMessage(CMDTX, tx)
+				txs = append(txs, tx)
 			} else {
 				notFound = append(notFound, hash)
 			}
@@ -630,8 +632,38 @@ func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 			}
 		}
 	}
+	if len(txs) != 0 {
+		if err := s.sendBatch(p, txs); err != nil {
+			return err
+		}
+	}
 	if len(notFound) != 0 {
 		return p.EnqueueP2PMessage(NewMessage(CMDNotFound, payload.NewInventory(inv.Type, notFound)))
+	}
+	return nil
+}
+
+func (s *Server) sendBatch(p Peer, txs []*transaction.Transaction) error {
+	for i := 0; i < len(txs); i++ {
+		var pl payload.Transactions
+		var totalSize, j int
+		for j = range txs[i:] {
+			sz := io.GetVarSize(txs[i])
+			if totalSize+sz > payload.MaxSize/4 {
+				break
+			}
+			pl.Values = append(pl.Values, txs[i])
+			totalSize += sz
+		}
+		i += j - 1
+		msg := NewMessage(CMDTxMany, &pl)
+		pkt, err := msg.Bytes()
+		if err == nil {
+			err = p.EnqueueP2PPacket(pkt)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -724,12 +756,17 @@ func (s *Server) handleConsensusCmd(cp *consensus.Payload) error {
 
 // handleTxCmd processes received transaction.
 // It never returns an error.
-func (s *Server) handleTxCmd(tx *transaction.Transaction) error {
+func (s *Server) handleTxCmd(txs ...*transaction.Transaction) error {
 	// It's OK for it to fail for various reasons like tx already existing
 	// in the pool.
-	if s.verifyAndPoolTX(tx) == RelaySucceed {
-		s.consensus.OnTransaction(tx)
-		s.broadcastTX(tx, nil)
+	if len(txs) != 1 {
+		s.log.Info("tx received", zap.Int("count", len(txs)))
+	}
+	for i := range txs {
+		if s.verifyAndPoolTX(txs[i]) == RelaySucceed {
+			s.consensus.OnTransaction(txs[i])
+			s.broadcastTX(txs[i], nil)
+		}
 	}
 	return nil
 }
@@ -898,6 +935,9 @@ func (s *Server) handleMessage(peer Peer, msg *Message) error {
 		case CMDConsensus:
 			cp := msg.Payload.(*consensus.Payload)
 			return s.handleConsensusCmd(cp)
+		case CMDTxMany:
+			cp := msg.Payload.(*payload.Transactions)
+			return s.handleTxCmd(cp.Values...)
 		case CMDTX:
 			tx := msg.Payload.(*transaction.Transaction)
 			return s.handleTxCmd(tx)

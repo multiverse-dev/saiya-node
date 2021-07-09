@@ -198,6 +198,7 @@ func convertPrimitive(item Item, typ Type) (Item, error) {
 
 // Struct represents a struct on the stack.
 type Struct struct {
+	rc
 	value []Item
 }
 
@@ -299,7 +300,7 @@ func (i *Struct) Convert(typ Type) (Item, error) {
 // Clone returns a Struct with all Struct fields copied by value.
 // Array fields are still copied by reference.
 func (i *Struct) Clone() *Struct {
-	ret := &Struct{make([]Item, len(i.value))}
+	ret := &Struct{value: make([]Item, len(i.value))}
 	for j := range i.value {
 		switch t := i.value[j].(type) {
 		case *Struct:
@@ -607,6 +608,7 @@ func (i *ByteArray) Convert(typ Type) (Item, error) {
 
 // Array represents a new Array object.
 type Array struct {
+	rc
 	value []Item
 }
 
@@ -707,6 +709,7 @@ type MapElement struct {
 // but it can be extended with a real map for fast random access in the future
 // if need be.
 type Map struct {
+	rc
 	value []MapElement
 }
 

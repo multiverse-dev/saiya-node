@@ -6,23 +6,20 @@ import (
 
 // refCounter represents reference counter for the VM.
 type refCounter struct {
-	items map[stackitem.Item]int
-	size  int
+	size int
 }
 
 func newRefCounter() *refCounter {
-	return &refCounter{
-		items: make(map[stackitem.Item]int),
-	}
+	return &refCounter{}
 }
 
 // Add adds an item to the reference counter.
 func (r *refCounter) Add(item stackitem.Item) {
 	r.size++
 
-	switch item.(type) {
-	case *stackitem.Array, *stackitem.Struct, *stackitem.Map:
-		if r.items[item]++; r.items[item] > 1 {
+	typ := item.Type()
+	if typ == stackitem.ArrayT || typ == stackitem.MapT || typ == stackitem.StructT {
+		if item.(stackitem.RC).AddRef() > 1 {
 			return
 		}
 
@@ -43,14 +40,11 @@ func (r *refCounter) Add(item stackitem.Item) {
 func (r *refCounter) Remove(item stackitem.Item) {
 	r.size--
 
-	switch item.(type) {
-	case *stackitem.Array, *stackitem.Struct, *stackitem.Map:
-		if r.items[item] > 1 {
-			r.items[item]--
+	typ := item.Type()
+	if typ == stackitem.ArrayT || typ == stackitem.MapT || typ == stackitem.StructT {
+		if item.(stackitem.RC).RemoveRef() > 0 {
 			return
 		}
-
-		delete(r.items, item)
 
 		switch t := item.(type) {
 		case *stackitem.Array, *stackitem.Struct:

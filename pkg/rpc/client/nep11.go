@@ -96,12 +96,12 @@ func (c *Client) NEP11TokensOf(tokenHash util.Uint160, owner util.Uint160) ([]st
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, err
 	}
 
-	arr, err := topIterableFromStack(result.Stack, string(""))
+	arr, err := TopIterableFromStack(result.Stack, string(""))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token IDs from stack: %w", err)
 	}
@@ -126,12 +126,12 @@ func (c *Client) NEP11NDOwnerOf(tokenHash util.Uint160, tokenID string) (util.Ui
 	if err != nil {
 		return util.Uint160{}, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return util.Uint160{}, err
 	}
 
-	return topUint160FromStack(result.Stack)
+	return TopUint160FromStack(result.Stack)
 }
 
 // Non-divisible NFT methods section end.
@@ -176,12 +176,12 @@ func (c *Client) NEP11DOwnerOf(tokenHash util.Uint160, tokenID string) ([]util.U
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, err
 	}
 
-	arr, err := topIterableFromStack(result.Stack, util.Uint160{})
+	arr, err := TopIterableFromStack(result.Stack, util.Uint160{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token IDs from stack: %w", err)
 	}
@@ -206,12 +206,12 @@ func (c *Client) NEP11Properties(tokenHash util.Uint160, tokenID string) (*stack
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, err
 	}
 
-	return topMapFromStack(result.Stack)
+	return TopMapFromStack(result.Stack)
 }
 
 // NEP11Tokens returns list of the tokens minted by the contract.
@@ -220,12 +220,12 @@ func (c *Client) NEP11Tokens(tokenHash util.Uint160) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, err
 	}
 
-	arr, err := topIterableFromStack(result.Stack, string(""))
+	arr, err := TopIterableFromStack(result.Stack, string(""))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token IDs from stack: %w", err)
 	}

@@ -65,11 +65,11 @@ func (c *Client) GetDesignatedByRole(role noderoles.Role, index uint32) (keys.Pu
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, fmt.Errorf("`getDesignatedByRole`: %w", err)
 	}
-	return topPublicKeysFromStack(result.Stack)
+	return TopPublicKeysFromStack(result.Stack)
 }
 
 // NNSResolve invokes `resolve` method on a NameService contract with the specified hash.
@@ -90,11 +90,11 @@ func (c *Client) NNSResolve(nnsHash util.Uint160, name string, typ nns.RecordTyp
 	if err != nil {
 		return "", err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return "", fmt.Errorf("`resolve`: %w", err)
 	}
-	return topStringFromStack(result.Stack)
+	return TopStringFromStack(result.Stack)
 }
 
 // NNSIsAvailable invokes `isAvailable` method on a NeoNameService contract with the specified hash.
@@ -108,11 +108,11 @@ func (c *Client) NNSIsAvailable(nnsHash util.Uint160, name string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return false, fmt.Errorf("`isAvailable`: %w", err)
 	}
-	return topBoolFromStack(result.Stack)
+	return TopBoolFromStack(result.Stack)
 }
 
 // NNSGetAllRecords returns all records for a given name from NNS service.
@@ -126,12 +126,12 @@ func (c *Client) NNSGetAllRecords(nnsHash util.Uint160, name string) ([]nns.Reco
 	if err != nil {
 		return nil, err
 	}
-	err = getInvocationError(result)
+	err = GetInvocationError(result)
 	if err != nil {
 		return nil, err
 	}
 
-	arr, err := topIterableFromStack(result.Stack, nns.RecordState{})
+	arr, err := TopIterableFromStack(result.Stack, nns.RecordState{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token IDs from stack: %w", err)
 	}

@@ -1,19 +1,6 @@
 package request
 
-import (
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"testing"
-
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
-
+/*
 func TestParam_UnmarshalJSON(t *testing.T) {
 	msg := `["str1", 123, null, ["str2", 3], [{"type": "String", "value": "jajaja"}],
                  {"account": "0xcadb3dc2faa3ef14a13b619c9a43124755aa2569"},
@@ -122,23 +109,23 @@ func TestGetWitness(t *testing.T) {
 
 func TestParamGetString(t *testing.T) {
 	p := Param{StringT, "jajaja"}
-	str, err := p.GetString()
+	str, err := p.AsString()
 	assert.Equal(t, "jajaja", str)
 	require.Nil(t, err)
 
 	p = Param{StringT, int(100500)}
-	_, err = p.GetString()
+	_, err = p.AsString()
 	require.NotNil(t, err)
 }
 
 func TestParamGetInt(t *testing.T) {
 	p := Param{NumberT, int(100500)}
-	i, err := p.GetInt()
+	i, err := p.AsInt()
 	assert.Equal(t, 100500, i)
 	require.Nil(t, err)
 
 	p = Param{NumberT, "jajaja"}
-	_, err = p.GetInt()
+	_, err = p.AsInt()
 	require.NotNil(t, err)
 }
 
@@ -375,3 +362,4 @@ func TestParamGetSigners(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+*/

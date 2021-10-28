@@ -53,7 +53,7 @@ type Request struct {
 type In struct {
 	JSONRPC   string          `json:"jsonrpc"`
 	Method    string          `json:"method"`
-	RawParams json.RawMessage `json:"params,omitempty"`
+	RawParams []Param         `json:"params,omitempty"`
 	RawID     json.RawMessage `json:"id,omitempty"`
 }
 
@@ -138,12 +138,6 @@ func NewIn() *In {
 // Params takes a slice of any type and attempts to bind
 // the params to it.
 func (r *In) Params() (*Params, error) {
-	params := Params{}
-
-	err := json.Unmarshal(r.RawParams, &params)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing params: %w", err)
-	}
-
-	return &params, nil
+	p := Params(r.RawParams)
+	return &p, nil
 }

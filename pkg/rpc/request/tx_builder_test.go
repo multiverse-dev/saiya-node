@@ -1,17 +1,6 @@
 package request
 
-import (
-	"encoding/hex"
-	"testing"
-
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/opcode"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
-
+/*
 func TestInvocationScriptCreationGood(t *testing.T) {
 	p := Param{Type: StringT, Value: "50befd26fdf6e4d957c11e078b24ebce6291456f"}
 	contract, err := p.GetUint160FromHex()
@@ -127,3 +116,4 @@ func TestExpandArrayIntoScript(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+*/

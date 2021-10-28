@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +11,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/request"
-	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,6 +170,7 @@ func TestWSExecutionVMStateCheck(t *testing.T) {
 	wsc.Close()
 }
 
+/*
 func TestWSFilteredSubscriptions(t *testing.T) {
 	var cases = []struct {
 		name       string
@@ -337,7 +335,7 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			wsc.Close()
 		})
 	}
-}
+}*/
 
 func TestNewWS(t *testing.T) {
 	srv := initTestServer(t, "")

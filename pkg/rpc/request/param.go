@@ -22,11 +22,9 @@ type (
 	// the server or to send to a server using
 	// the client.
 	Param struct {
-		Type  paramType
-		Value interface{}
+		json.RawMessage
 	}
 
-	paramType int
 	// FuncParam represents a function argument parameter used in the
 	// invokefunction RPC method.
 	FuncParam struct {
@@ -64,25 +62,18 @@ type (
 	}
 )
 
-// These are parameter types accepted by RPC server.
-const (
-	defaultT paramType = iota
-	StringT
-	NumberT
-	BooleanT
-	ArrayT
-	FuncParamT
-	BlockFilterT
-	TxFilterT
-	NotificationFilterT
-	ExecutionFilterT
-	SignerWithWitnessT
+var (
+	jsonNullBytes       = []byte("null")
+	errMissingParameter = errors.New("parameter is missing")
+	errNotAString       = errors.New("not a string")
+	errNotAnInt         = errors.New("not an integer")
+	errNotABool         = errors.New("not a boolean")
+	errNotAnArray       = errors.New("not an array")
 )
 
-var errMissingParameter = errors.New("parameter is missing")
-
 func (p Param) String() string {
-	return fmt.Sprintf("%v", p.Value)
+	str, _ := p.AsString()
+	return str
 }
 
 // GetString returns string value of the parameter.
@@ -90,42 +81,135 @@ func (p *Param) GetString() (string, error) {
 	if p == nil {
 		return "", errMissingParameter
 	}
-	str, ok := p.Value.(string)
-	if !ok {
-		return "", errors.New("not a string")
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return "", errNotAString
 	}
-	return str, nil
+	var s string
+	err := json.Unmarshal(p.RawMessage, &s)
+	if err != nil {
+		return "", errNotAString
+	}
+	return s, nil
 }
 
-// GetBoolean returns boolean value of the parameter.
-func (p *Param) GetBoolean() bool {
+// AsString returns string value of the parameter or tries to cast parameter to a string value.
+func (p *Param) AsString() (string, error) {
 	if p == nil {
-		return false
+		return "", errMissingParameter
 	}
-	switch p.Type {
-	case NumberT:
-		return p.Value != 0
-	case StringT:
-		return p.Value != ""
-	case BooleanT:
-		return p.Value == true
-	default:
-		return true
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return "", errNotAString
 	}
+	var s string
+	err := json.Unmarshal(p.RawMessage, &s)
+	if err == nil {
+		return s, nil
+	}
+	var i int
+	err = json.Unmarshal(p.RawMessage, &i)
+	if err == nil {
+		return strconv.Itoa(i), nil
+	}
+	var b bool
+	err = json.Unmarshal(p.RawMessage, &b)
+	if err == nil {
+		switch b {
+		case true:
+			return "true", nil
+		case false:
+			return "false", nil
+		}
+	}
+	// TODO: array can also be converted to a string in C#
+	return "", errNotAString
 }
 
-// GetInt returns int value of te parameter.
+// GetBool returns boolean value of the parameter.
+func (p *Param) GetBool() (bool, error) {
+	if p == nil {
+		return false, errMissingParameter
+	}
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return false, errNotABool
+	}
+	var b bool
+	err := json.Unmarshal(p.RawMessage, &b)
+	if err != nil {
+		return b, errNotABool
+	}
+	return b, nil
+}
+
+// AsBool returns boolean value of the parameter or tries to cast parameter to a bool value.
+func (p *Param) AsBool() (bool, error) {
+	if p == nil {
+		return false, errMissingParameter
+	}
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return false, errNotABool
+	}
+	var b bool
+	err := json.Unmarshal(p.RawMessage, &b)
+	if err == nil {
+		return b, nil
+	}
+	var s string
+	err = json.Unmarshal(p.RawMessage, &s)
+	if err == nil {
+		return s != "", nil
+	}
+	var i int
+	err = json.Unmarshal(p.RawMessage, &i)
+	if err == nil {
+		return i != 0, nil
+	}
+	return false, errNotABool
+}
+
+// GetInt returns int value of the parameter if the parameter is integer.
 func (p *Param) GetInt() (int, error) {
 	if p == nil {
 		return 0, errMissingParameter
 	}
-	i, ok := p.Value.(int)
-	if ok {
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return 0, errNotAnInt
+	}
+	var i int
+	err := json.Unmarshal(p.RawMessage, &i)
+	if err != nil {
+		return i, errNotAnInt
+	}
+	return i, nil
+}
+
+// AsInt returns int value of the parameter or tries to cast parameter to an int value.
+func (p *Param) AsInt() (int, error) {
+	if p == nil {
+		return 0, errMissingParameter
+	}
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return 0, errNotAnInt
+	}
+	var i int
+	err := json.Unmarshal(p.RawMessage, &i)
+	if err == nil {
 		return i, nil
-	} else if s, ok := p.Value.(string); ok {
+	}
+	var s string
+	err = json.Unmarshal(p.RawMessage, &s)
+	if err == nil {
 		return strconv.Atoi(s)
 	}
-	return 0, errors.New("not an integer")
+	var b bool
+	err = json.Unmarshal(p.RawMessage, &b)
+	if err == nil {
+		i = 0
+		if b {
+			i = 1
+		}
+		return i, nil
+	}
+	return 0, errNotAnInt
 }
 
 // GetArray returns a slice of Params stored in the parameter.
@@ -133,27 +217,20 @@ func (p *Param) GetArray() ([]Param, error) {
 	if p == nil {
 		return nil, errMissingParameter
 	}
-	a, ok := p.Value.([]Param)
-	if ok {
-		return a, nil
+	if bytes.Equal(p.RawMessage, jsonNullBytes) {
+		return nil, errNotAnArray
 	}
-	raw, ok := p.Value.(json.RawMessage)
-	if !ok {
-		return nil, errors.New("not an array")
-	}
-
-	a = []Param{}
-	err := json.Unmarshal(raw, &a)
+	a := []Param{}
+	err := json.Unmarshal(p.RawMessage, &a)
 	if err != nil {
-		return nil, errors.New("not an array")
+		return nil, errNotAnArray
 	}
-	p.Value = a
 	return a, nil
 }
 
 // GetUint256 returns Uint256 value of the parameter.
 func (p *Param) GetUint256() (util.Uint256, error) {
-	s, err := p.GetString()
+	s, err := p.AsString()
 	if err != nil {
 		return util.Uint256{}, err
 	}
@@ -163,7 +240,7 @@ func (p *Param) GetUint256() (util.Uint256, error) {
 
 // GetUint160FromHex returns Uint160 value of the parameter encoded in hex.
 func (p *Param) GetUint160FromHex() (util.Uint160, error) {
-	s, err := p.GetString()
+	s, err := p.AsString()
 	if err != nil {
 		return util.Uint160{}, err
 	}
@@ -177,7 +254,7 @@ func (p *Param) GetUint160FromHex() (util.Uint160, error) {
 // GetUint160FromAddress returns Uint160 value of the parameter that was
 // supplied as an address.
 func (p *Param) GetUint160FromAddress() (util.Uint160, error) {
-	s, err := p.GetString()
+	s, err := p.AsString()
 	if err != nil {
 		return util.Uint160{}, err
 	}
@@ -200,26 +277,15 @@ func (p *Param) GetFuncParam() (FuncParam, error) {
 	if p == nil {
 		return FuncParam{}, errMissingParameter
 	}
-	fp, ok := p.Value.(FuncParam)
-	if ok {
-		return fp, nil
-	}
-	raw, ok := p.Value.(json.RawMessage)
-	if !ok {
-		return FuncParam{}, errors.New("not a function parameter")
-	}
-	err := json.Unmarshal(raw, &fp)
-	if err != nil {
-		return fp, err
-	}
-	p.Value = fp
-	return fp, nil
+	fp := FuncParam{}
+	err := json.Unmarshal(p.RawMessage, &fp)
+	return fp, err
 }
 
 // GetBytesHex returns []byte value of the parameter if
 // it is a hex-encoded string.
 func (p *Param) GetBytesHex() ([]byte, error) {
-	s, err := p.GetString()
+	s, err := p.AsString()
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +296,7 @@ func (p *Param) GetBytesHex() ([]byte, error) {
 // GetBytesBase64 returns []byte value of the parameter if
 // it is a base64-encoded string.
 func (p *Param) GetBytesBase64() ([]byte, error) {
-	s, err := p.GetString()
+	s, err := p.AsString()
 	if err != nil {
 		return nil, err
 	}
@@ -240,25 +306,17 @@ func (p *Param) GetBytesBase64() ([]byte, error) {
 
 // GetSignerWithWitness returns SignerWithWitness value of the parameter.
 func (p *Param) GetSignerWithWitness() (SignerWithWitness, error) {
-	c, ok := p.Value.(SignerWithWitness)
-	if ok {
-		return c, nil
-	}
-	raw, ok := p.Value.(json.RawMessage)
-	if !ok {
-		return SignerWithWitness{}, errors.New("not a signer")
-	}
 	aux := new(signerWithWitnessAux)
-	err := json.Unmarshal(raw, aux)
+	err := json.Unmarshal(p.RawMessage, aux)
 	if err != nil {
-		return SignerWithWitness{}, errors.New("not a signer")
+		return SignerWithWitness{}, fmt.Errorf("not a signer: %w", err)
 	}
-	accParam := Param{StringT, aux.Account}
+	accParam := Param{[]byte(fmt.Sprintf(`"%s"`, aux.Account))}
 	acc, err := accParam.GetUint160FromAddressOrHex()
 	if err != nil {
-		return SignerWithWitness{}, errors.New("not a signer")
+		return SignerWithWitness{}, fmt.Errorf("not a signer: %w", err)
 	}
-	c = SignerWithWitness{
+	c := SignerWithWitness{
 		Signer: transaction.Signer{
 			Account:          acc,
 			Scopes:           aux.Scopes,
@@ -270,7 +328,6 @@ func (p *Param) GetSignerWithWitness() (SignerWithWitness, error) {
 			VerificationScript: aux.VerificationScript,
 		},
 	}
-	p.Value = c
 	return c, nil
 }
 
@@ -309,48 +366,9 @@ func (p Param) GetSignersWithWitnesses() ([]transaction.Signer, []transaction.Wi
 	return signers, witnesses, nil
 }
 
-// UnmarshalJSON implements json.Unmarshaler interface.
-func (p *Param) UnmarshalJSON(data []byte) error {
-	r := bytes.NewReader(data)
-	jd := json.NewDecoder(r)
-	jd.UseNumber()
-	tok, err := jd.Token()
-	if err != nil {
-		return err
-	}
-	switch t := tok.(type) {
-	case json.Delim:
-		if t == json.Delim('[') {
-			var arr []Param
-			err := json.Unmarshal(data, &arr)
-			if err != nil {
-				return err
-			}
-			p.Type = ArrayT
-			p.Value = arr
-		} else {
-			p.Type = defaultT
-			p.Value = json.RawMessage(data)
-		}
-	case bool:
-		p.Type = BooleanT
-		p.Value = t
-	case float64: // unexpected because of `UseNumber`.
-		panic("unexpected")
-	case json.Number:
-		value, err := strconv.Atoi(string(t))
-		if err != nil {
-			return err
-		}
-		p.Type = NumberT
-		p.Value = value
-	case string:
-		p.Type = StringT
-		p.Value = t
-	default: // null
-		p.Type = defaultT
-	}
-	return nil
+// IsNull returns whether parameter represents JSON nil value.
+func (p *Param) IsNull() bool {
+	return bytes.Equal(p.RawMessage, jsonNullBytes)
 }
 
 // signerWithWitnessAux is an auxiluary struct for JSON marshalling. We need it because of

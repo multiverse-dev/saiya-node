@@ -452,10 +452,6 @@ var rpcTestCases = map[string][]rpcTestCase{
 				return &v
 			},
 		},
-		{
-			params: "1",
-			fail:   true,
-		},
 	},
 	"getblock": {
 		{
@@ -1067,7 +1063,7 @@ var rpcTestCases = map[string][]rpcTestCase{
 			params: "[1]",
 			result: func(*executor) interface{} {
 				return &result.ValidateAddress{
-					Address: float64(1),
+					Address: "1", // C# stringifies responses for this RPC call
 					IsValid: false,
 				}
 			},

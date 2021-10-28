@@ -187,10 +187,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.BlockFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, 3, filt.Primary)
 			},
 		},
@@ -202,10 +200,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.TxFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, util.Uint160{1, 2, 3, 4, 5}, *filt.Sender)
 				require.Nil(t, filt.Signer)
 			},
@@ -218,10 +214,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.TxFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Nil(t, filt.Sender)
 				require.Equal(t, util.Uint160{0, 42}, *filt.Signer)
 			},
@@ -235,10 +229,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.TxFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, util.Uint160{1, 2, 3, 4, 5}, *filt.Sender)
 				require.Equal(t, util.Uint160{0, 42}, *filt.Signer)
 			},
@@ -251,10 +243,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.NotificationFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, util.Uint160{1, 2, 3, 4, 5}, *filt.Contract)
 				require.Nil(t, filt.Name)
 			},
@@ -267,10 +257,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.NotificationFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, "my_pretty_notification", *filt.Name)
 				require.Nil(t, filt.Contract)
 			},
@@ -284,10 +272,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.NotificationFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, util.Uint160{1, 2, 3, 4, 5}, *filt.Contract)
 				require.Equal(t, "my_pretty_notification", *filt.Name)
 			},
@@ -300,10 +286,8 @@ func TestWSFilteredSubscriptions(t *testing.T) {
 			},
 			func(t *testing.T, p *request.Params) {
 				param := p.Value(1)
-				raw, ok := param.Value.(json.RawMessage)
-				require.True(t, ok)
 				filt := new(request.ExecutionFilter)
-				require.NoError(t, json.Unmarshal(raw, filt))
+				require.NoError(t, json.Unmarshal(param.RawMessage, filt))
 				require.Equal(t, "FAULT", filt.State)
 			},
 		},

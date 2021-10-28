@@ -1,6 +1,8 @@
 package request
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type (
 	// Params represents the JSON-RPC params.
@@ -14,15 +16,6 @@ func (p Params) Value(index int) *Param {
 		return &p[index]
 	}
 
-	return nil
-}
-
-// ValueWithType returns the param struct at the given index if it
-// exists and matches the given type.
-func (p Params) ValueWithType(index int, valType paramType) *Param {
-	if val := p.Value(index); val != nil && val.Type == valType {
-		return val
-	}
 	return nil
 }
 

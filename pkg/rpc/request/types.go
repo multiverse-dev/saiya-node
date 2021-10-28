@@ -51,10 +51,10 @@ type Request struct {
 // In represents a standard JSON-RPC 2.0
 // request: http://www.jsonrpc.org/specification#request_object.
 type In struct {
-	JSONRPC   string          `json:"jsonrpc"`
-	Method    string          `json:"method"`
-	RawParams json.RawMessage `json:"params,omitempty"`
-	RawID     json.RawMessage `json:"id,omitempty"`
+	JSONRPC   string            `json:"jsonrpc"`
+	Method    string            `json:"method"`
+	RawParams []json.RawMessage `json:"params,omitempty"`
+	RawID     json.RawMessage   `json:"id,omitempty"`
 }
 
 // Batch represents a standard JSON-RPC 2.0
@@ -109,6 +109,43 @@ func (r *Request) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+// In represents a standard JSON-RPC 2.0
+// request: http://www.jsonrpc.org/specification#request_object.
+type inAux struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	RawID   json.RawMessage `json:"id,omitempty"`
+}
+
+type paramsAux struct {
+	Params []json.RawMessage `json:"params,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface.
+func (r *In) UnmarshalJSON(data []byte) error {
+	aux := new(inAux)
+	err := json.Unmarshal(data, &aux)
+	if err != nil {
+		return err
+	}
+	r.JSONRPC = aux.JSONRPC
+	r.Method = aux.Method
+	r.RawID = aux.RawID
+	pAux := new(paramsAux)
+	err = json.Unmarshal(data, &pAux)
+	if err != nil {
+		return err
+	}
+	r.RawParams = make([]Param, len(pAux.Params))
+	for i := range pAux.Params {
+		r.RawParams[i] = Param{
+			RawMessage: pAux.Params[i],
+		}
+	}
+	return nil
+}*/
+
 // DecodeData decodes the given reader into the the request
 // struct.
 func (r *Request) DecodeData(data io.ReadCloser) error {
@@ -138,12 +175,10 @@ func NewIn() *In {
 // Params takes a slice of any type and attempts to bind
 // the params to it.
 func (r *In) Params() (*Params, error) {
-	params := Params{}
-
-	err := json.Unmarshal(r.RawParams, &params)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing params: %w", err)
+	p := make([]Param, len(r.RawParams))
+	for i := range r.RawParams {
+		p[i] = Param{RawMessage: r.RawParams[i]}
 	}
-
-	return &params, nil
+	res := Params(p)
+	return &res, nil
 }

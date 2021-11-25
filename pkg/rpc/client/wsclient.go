@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -121,20 +122,24 @@ readloop:
 		rr := new(requestResponse)
 		err := c.ws.SetReadDeadline(time.Now().Add(wsPongLimit))
 		if err != nil {
+			fmt.Println(fmt.Sprintf("failed to set read deadline: %s", err.Error()))
 			break
 		}
 		err = c.ws.ReadJSON(rr)
 		if err != nil {
 			// Timeout/connection loss/malformed response.
+			fmt.Println(fmt.Sprintf("failed to read JSON response: %s", err.Error()))
 			break
 		}
 		if rr.RawID == nil && rr.Method != "" {
 			event, err := response.GetEventIDFromString(rr.Method)
 			if err != nil {
+				fmt.Println(fmt.Sprintf("failed to get event ID from string: %s", err.Error()))
 				// Bad event received.
 				break
 			}
 			if event != response.MissedEventID && len(rr.RawParams) != 1 {
+				fmt.Println(fmt.Sprintf("invalid event format: %v, %v", event, rr.RawParams))
 				// Bad event received.
 				break
 			}
@@ -154,12 +159,15 @@ readloop:
 				// No value.
 			default:
 				// Bad event received.
+				fmt.Println(fmt.Sprintf("unexpected event type: %s", event))
 				break readloop
 			}
 			if event != response.MissedEventID {
 				err = json.Unmarshal(rr.RawParams[0].RawMessage, val)
 				if err != nil {
 					// Bad event received.
+					fmt.Println(fmt.Sprintf("failed to unmarshal event raw message of type %s\n\t"+
+						"raw message:\n\t%s\n\terror:\n\t %s", event, string(rr.RawParams[0].RawMessage), err.Error()))
 					break
 				}
 			}
@@ -173,6 +181,7 @@ readloop:
 			c.responses <- resp
 		} else {
 			// Malformed response, neither valid request, nor valid response.
+			fmt.Println(fmt.Sprintf("malformed response: %v", rr))
 			break
 		}
 	}

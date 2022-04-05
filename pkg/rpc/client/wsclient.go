@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -129,20 +130,24 @@ readloop:
 		rr := new(requestResponse)
 		err := c.ws.SetReadDeadline(time.Now().Add(wsPongLimit))
 		if err != nil {
+			fmt.Printf("WSC: error while setting read deadline: %s\n", err.Error())
 			break
 		}
 		err = c.ws.ReadJSON(rr)
 		if err != nil {
 			// Timeout/connection loss/malformed response.
+			fmt.Printf("WSC: error while reading JSON requestResponse: %s\n", err.Error())
 			break
 		}
 		if rr.RawID == nil && rr.Method != "" {
 			event, err := response.GetEventIDFromString(rr.Method)
 			if err != nil {
+				fmt.Printf("WSC: error while retrieving EventID: %s\n\tmethod: %s\n", err.Error(), rr.Method)
 				// Bad event received.
 				break
 			}
 			if event != response.MissedEventID && len(rr.RawParams) != 1 {
+				fmt.Printf("WSC: bad event\n\tmethod: %s\n", rr.Method)
 				// Bad event received.
 				break
 			}
@@ -151,6 +156,7 @@ readloop:
 			case response.BlockEventID:
 				sr, err := c.StateRootInHeader()
 				if err != nil {
+					fmt.Printf("WSC: failed to get StateRootInHeader\n\tmethod: %s\n\tresult (string): %s\n", rr.Method, string(rr.RawParams[0].RawMessage))
 					// Client is not initialised.
 					break
 				}
@@ -172,6 +178,7 @@ readloop:
 			if event != response.MissedEventID {
 				err = json.Unmarshal(rr.RawParams[0].RawMessage, val)
 				if err != nil {
+					fmt.Printf("WSC: failed to unmarshal notification event: %s\n\tid=%d\n\tbody (string):%s\n", err.Error(), event, string(rr.RawParams[0].RawMessage))
 					// Bad event received.
 					break
 				}

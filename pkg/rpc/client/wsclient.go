@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/ioutil"
 	"strconv"
 	"sync"
 	"time"
@@ -127,7 +129,8 @@ func (c *WSClient) Close() {
 }
 
 func (c *WSClient) wsReader() {
-	c.ws.SetReadLimit(wsReadLimit)
+	// Do not limit reads.
+	// c.ws.SetReadLimit(wsReadLimit)
 	c.ws.SetPongHandler(func(string) error { return c.ws.SetReadDeadline(time.Now().Add(wsPongLimit)) })
 readloop:
 	for {
@@ -136,8 +139,23 @@ readloop:
 		if err != nil {
 			break
 		}
-		err = c.ws.ReadJSON(rr)
+		_, r, err := c.ws.NextReader()
 		if err != nil {
+			fmt.Printf("failed to get next reader: %s\n", err)
+			break
+		}
+		bytes, err := ioutil.ReadAll(r)
+		if err != nil {
+			fmt.Printf("failed to drain ws reader: %s\n", err)
+			break
+		}
+		if len(bytes) > wsReadLimit {
+			// Continue invocation, just log here.
+			fmt.Printf("Too long message received:\n%s\n", string(bytes))
+		}
+		err = json.Unmarshal(bytes, rr)
+		if err != nil {
+			fmt.Sprintf("failed to unmarshal response: %s\n", err)
 			// Timeout/connection loss/malformed response.
 			break
 		}

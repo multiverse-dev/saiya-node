@@ -125,25 +125,28 @@ func callExFromNative(ic *interop.Context, caller util.Uint160, cs *state.Contra
 	if wrapped {
 		ic.DAO = ic.DAO.GetPrivate()
 	}
-	onUnload := func(commit bool) error {
-		if wrapped {
-			if commit {
-				_, err := ic.DAO.Persist()
-				if err != nil {
-					return fmt.Errorf("failed to persist changes %w", err)
+	var onUnload func(bool) error
+	if wrapped || pushNullOnUnloading || callFromNative {
+		onUnload = func(commit bool) error {
+			if wrapped {
+				if commit {
+					_, err := ic.DAO.Persist()
+					if err != nil {
+						return fmt.Errorf("failed to persist changes %w", err)
+					}
+				} else {
+					ic.Notifications = ic.Notifications[:baseNtfCount] // Rollback all notification changes made by current context.
 				}
-			} else {
-				ic.Notifications = ic.Notifications[:baseNtfCount] // Rollback all notification changes made by current context.
+				ic.DAO = baseDAO
 			}
-			ic.DAO = baseDAO
+			if pushNullOnUnloading && commit {
+				ic.VM.Context().Estack().PushItem(stackitem.Null{}) // Must use current context stack.
+			}
+			if callFromNative && !commit {
+				return fmt.Errorf("unhandled exception")
+			}
+			return nil
 		}
-		if pushNullOnUnloading && commit {
-			ic.VM.Context().Estack().PushItem(stackitem.Null{}) // Must use current context stack.
-		}
-		if callFromNative && !commit {
-			return fmt.Errorf("unhandled exception")
-		}
-		return nil
 	}
 	ic.VM.LoadNEFMethod(&cs.NEF, caller, cs.Hash, f,
 		hasReturn, methodOff, initOff, onUnload)

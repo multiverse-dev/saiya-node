@@ -82,6 +82,9 @@ const (
 	wsWriteLimit = wsPingPeriod / 2
 )
 
+// errConnClosedByUser is a WSClient error used iff the user calls (*WSClient).Close method by himself.
+var errConnClosedByUser = errors.New("connection closed by user")
+
 // NewWS returns a new WSClient ready to use (with established websocket
 // connection). You need to use websocket URL for it like `ws://1.2.3.4/ws`.
 // You should call Init method to initialize the network magic the client is
@@ -121,6 +124,7 @@ func NewWS(ctx context.Context, endpoint string, opts Options) (*WSClient, error
 // unusable.
 func (c *WSClient) Close() {
 	if c.closeCalled.CAS(false, true) {
+		c.setCloseErr(errConnClosedByUser)
 		// Closing shutdown channel sends a signal to wsWriter to break out of the
 		// loop. In doing so it does ws.Close() closing the network connection
 		// which in turn makes wsReader receive an err from ws.ReadJSON() and also
@@ -142,85 +146,90 @@ func (c *WSClient) wsReader() {
 	var connCloseErr error
 readloop:
 	for {
-		rr := new(requestResponse)
-		err := c.ws.SetReadDeadline(time.Now().Add(wsPongLimit))
-		if err != nil {
-			connCloseErr = fmt.Errorf("failed to set response read deadline: %w", err)
-			break
-		}
-		err = c.ws.ReadJSON(rr)
-		if err != nil {
-			// Timeout/connection loss/malformed response.
-			connCloseErr = fmt.Errorf("failed to read JSON response (timeout/connection loss/malformed response): %w", err)
-			break
-		}
-		if rr.RawID == nil && rr.Method != "" {
-			event, err := response.GetEventIDFromString(rr.Method)
+		select {
+		case <-c.shutdown:
+			break readloop
+		default:
+			rr := new(requestResponse)
+			err := c.ws.SetReadDeadline(time.Now().Add(wsPongLimit))
 			if err != nil {
-				// Bad event received.
-				connCloseErr = fmt.Errorf("failed to perse event ID from string %s: %w", rr.Method, err)
-				break
-			}
-			if event != response.MissedEventID && len(rr.RawParams) != 1 {
-				// Bad event received.
-				connCloseErr = fmt.Errorf("bad event received: %s / %d", event, len(rr.RawParams))
-				break
-			}
-			var val interface{}
-			switch event {
-			case response.BlockEventID:
-				sr, err := c.StateRootInHeader()
-				if err != nil {
-					// Client is not initialized.
-					connCloseErr = fmt.Errorf("failed to fetch StateRootInHeader: %w", err)
-					break readloop
-				}
-				val = block.New(sr)
-			case response.TransactionEventID:
-				val = &transaction.Transaction{}
-			case response.NotificationEventID:
-				val = new(subscriptions.NotificationEvent)
-			case response.ExecutionEventID:
-				val = new(state.AppExecResult)
-			case response.NotaryRequestEventID:
-				val = new(subscriptions.NotaryRequestEvent)
-			case response.MissedEventID:
-				// No value.
-			default:
-				// Bad event received.
-				connCloseErr = fmt.Errorf("unknown event received: %d", event)
+				connCloseErr = fmt.Errorf("failed to set response read deadline: %w", err)
 				break readloop
 			}
-			if event != response.MissedEventID {
-				err = json.Unmarshal(rr.RawParams[0].RawMessage, val)
+			err = c.ws.ReadJSON(rr)
+			if err != nil {
+				// Timeout/connection loss/malformed response.
+				connCloseErr = fmt.Errorf("failed to read JSON response (timeout/connection loss/malformed response): %w", err)
+				break readloop
+			}
+			if rr.RawID == nil && rr.Method != "" {
+				event, err := response.GetEventIDFromString(rr.Method)
 				if err != nil {
 					// Bad event received.
-					connCloseErr = fmt.Errorf("failed to unmarshal event of type %s from JSON: %w", event, err)
-					break
+					connCloseErr = fmt.Errorf("failed to perse event ID from string %s: %w", rr.Method, err)
+					break readloop
 				}
+				if event != response.MissedEventID && len(rr.RawParams) != 1 {
+					// Bad event received.
+					connCloseErr = fmt.Errorf("bad event received: %s / %d", event, len(rr.RawParams))
+					break readloop
+				}
+				var val interface{}
+				switch event {
+				case response.BlockEventID:
+					sr, err := c.StateRootInHeader()
+					if err != nil {
+						// Client is not initialized.
+						connCloseErr = fmt.Errorf("failed to fetch StateRootInHeader: %w", err)
+						break readloop
+					}
+					val = block.New(sr)
+				case response.TransactionEventID:
+					val = &transaction.Transaction{}
+				case response.NotificationEventID:
+					val = new(subscriptions.NotificationEvent)
+				case response.ExecutionEventID:
+					val = new(state.AppExecResult)
+				case response.NotaryRequestEventID:
+					val = new(subscriptions.NotaryRequestEvent)
+				case response.MissedEventID:
+					// No value.
+				default:
+					// Bad event received.
+					connCloseErr = fmt.Errorf("unknown event received: %d", event)
+					break readloop
+				}
+				if event != response.MissedEventID {
+					err = json.Unmarshal(rr.RawParams[0].RawMessage, val)
+					if err != nil {
+						// Bad event received.
+						connCloseErr = fmt.Errorf("failed to unmarshal event of type %s from JSON: %w", event, err)
+						break readloop
+					}
+				}
+				c.Notifications <- Notification{event, val}
+			} else if rr.RawID != nil && (rr.Error != nil || rr.Result != nil) {
+				resp := new(response.Raw)
+				resp.ID = rr.RawID
+				resp.JSONRPC = rr.JSONRPC
+				resp.Error = rr.Error
+				resp.Result = rr.Result
+				id, err := strconv.Atoi(string(resp.ID))
+				if err != nil {
+					connCloseErr = fmt.Errorf("failed to retrieve response ID from string %s: %w", string(resp.ID), err)
+					break readloop // Malformed response (invalid response ID).
+				}
+				ch := c.getResponseChannel(uint64(id))
+				if ch == nil {
+					connCloseErr = fmt.Errorf("unknown response channel for response %d", id)
+					break readloop // Unknown response (unexpected response ID).
+				}
+				ch <- resp
+			} else {
+				// Malformed response, neither valid request, nor valid response.
+				connCloseErr = fmt.Errorf("malformed response")
+				break readloop
 			}
-			c.Notifications <- Notification{event, val}
-		} else if rr.RawID != nil && (rr.Error != nil || rr.Result != nil) {
-			resp := new(response.Raw)
-			resp.ID = rr.RawID
-			resp.JSONRPC = rr.JSONRPC
-			resp.Error = rr.Error
-			resp.Result = rr.Result
-			id, err := strconv.Atoi(string(resp.ID))
-			if err != nil {
-				connCloseErr = fmt.Errorf("failed to retrieve response ID from string %s: %w", string(resp.ID), err)
-				break // Malformed response (invalid response ID).
-			}
-			ch := c.getResponseChannel(uint64(id))
-			if ch == nil {
-				connCloseErr = fmt.Errorf("unknown response channel for response %d", id)
-				break // Unknown response (unexpected response ID).
-			}
-			ch <- resp
-		} else {
-			// Malformed response, neither valid request, nor valid response.
-			connCloseErr = fmt.Errorf("malformed response")
-			break
 		}
 	}
 	if connCloseErr != nil {
@@ -443,10 +452,14 @@ func (c *WSClient) setCloseErr(err error) {
 	}
 }
 
-// GetError returns the reason of WS connection closing.
+// GetError returns the reason of WS connection closing. It returns nil in case if connection
+// was closed by the use via Close() method calling.
 func (c *WSClient) GetError() error {
 	c.closeErrLock.RLock()
 	defer c.closeErrLock.RUnlock()
 
+	if c.closeErr != nil && errors.Is(c.closeErr, errConnClosedByUser) {
+		return nil
+	}
 	return c.closeErr
 }

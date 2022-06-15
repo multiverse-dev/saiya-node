@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/nspcc-dev/neo-go/pkg/core/interop"
 	"github.com/nspcc-dev/neo-go/pkg/core/interop/iterator"
 	"github.com/nspcc-dev/neo-go/pkg/core/state"
@@ -16,17 +17,20 @@ import (
 // Invoke represents a code invocation result and is used by several RPC calls
 // that invoke functions, scripts and generic bytecode.
 type Invoke struct {
-	State                  string
-	GasConsumed            int64
-	Script                 []byte
-	Stack                  []stackitem.Item
-	FaultException         string
-	Notifications          []state.NotificationEvent
-	Transaction            *transaction.Transaction
-	Diagnostics            *InvokeDiag
-	maxIteratorResultItems int
-	finalize               func()
+	State          string
+	GasConsumed    int64
+	Script         []byte
+	Stack          []stackitem.Item
+	FaultException string
+	Notifications  []state.NotificationEvent
+	Transaction    *transaction.Transaction
+	Diagnostics    *InvokeDiag
+	Session        uuid.UUID
+	finalize       func()
+	onNewSession   OnNewSession
 }
+
+type OnNewSession func(sessionID string, iterators []ServerIterator, finalize func())
 
 // InvokeDiag is an additional diagnostic data for invocation.
 type InvokeDiag struct {
@@ -35,7 +39,7 @@ type InvokeDiag struct {
 }
 
 // NewInvoke returns a new Invoke structure with the given fields set.
-func NewInvoke(ic *interop.Context, script []byte, faultException string, maxIteratorResultItems int) *Invoke {
+func NewInvoke(ic *interop.Context, script []byte, faultException string, registerSession OnNewSession) *Invoke {
 	var diag *InvokeDiag
 	tree := ic.VM.GetInvocationTree()
 	if tree != nil {
@@ -49,15 +53,15 @@ func NewInvoke(ic *interop.Context, script []byte, faultException string, maxIte
 		notifications = make([]state.NotificationEvent, 0)
 	}
 	return &Invoke{
-		State:                  ic.VM.State().String(),
-		GasConsumed:            ic.VM.GasConsumed(),
-		Script:                 script,
-		Stack:                  ic.VM.Estack().ToArray(),
-		FaultException:         faultException,
-		Notifications:          notifications,
-		Diagnostics:            diag,
-		maxIteratorResultItems: maxIteratorResultItems,
-		finalize:               ic.Finalize,
+		State:          ic.VM.State().String(),
+		GasConsumed:    ic.VM.GasConsumed(),
+		Script:         script,
+		Stack:          ic.VM.Estack().ToArray(),
+		FaultException: faultException,
+		Notifications:  notifications,
+		Diagnostics:    diag,
+		finalize:       ic.Finalize,
+		onNewSession:   registerSession,
 	}
 }
 
@@ -70,22 +74,32 @@ type invokeAux struct {
 	Notifications  []state.NotificationEvent `json:"notifications"`
 	Transaction    []byte                    `json:"tx,omitempty"`
 	Diagnostics    *InvokeDiag               `json:"diagnostics,omitempty"`
+	Session        string                    `json:"session,omitempty"`
 }
+
+// iteratorInterfaceName is a string used to mark Iterator inside the InteropInterface.
+const iteratorInterfaceName = "IIterator"
 
 type iteratorAux struct {
-	Type      string            `json:"type"`
-	Value     []json.RawMessage `json:"iterator"`
-	Truncated bool              `json:"truncated"`
+	Type      string `json:"type"`
+	Interface string `json:"interface"`
+	ID        string `json:"id"`
 }
 
-// Iterator represents deserialized VM iterator values with a truncated flag.
+// Iterator represents VM iterator identifier.
 type Iterator struct {
-	Values    []stackitem.Item
-	Truncated bool
+	ID uuid.UUID
+}
+
+// ServerIterator represents Iterator on the server side.
+type ServerIterator struct {
+	ID   string
+	Item stackitem.Item
 }
 
 // Finalize releases resources occupied by Iterators created at the script invocation.
-// This method will be called automatically on Invoke marshalling.
+// This method will be called automatically on Invoke marshalling or by the Server's
+// sessions handler.
 func (r *Invoke) Finalize() {
 	if r.finalize != nil {
 		r.finalize()
@@ -94,36 +108,36 @@ func (r *Invoke) Finalize() {
 
 // MarshalJSON implements the json.Marshaler.
 func (r Invoke) MarshalJSON() ([]byte, error) {
-	defer r.Finalize()
 	var (
-		st       json.RawMessage
-		err      error
-		faultSep string
-		arr      = make([]json.RawMessage, len(r.Stack))
+		st              json.RawMessage
+		err             error
+		faultSep        string
+		arr             = make([]json.RawMessage, len(r.Stack))
+		sessionsEnabled = r.onNewSession != nil
+		sessionID       string
+		iterators       []ServerIterator
 	)
 	if len(r.FaultException) != 0 {
 		faultSep = " / "
 	}
-arrloop:
 	for i := range arr {
 		var data []byte
 		if (r.Stack[i].Type() == stackitem.InteropT) && iterator.IsIterator(r.Stack[i]) {
-			iteratorValues, truncated := iterator.Values(r.Stack[i], r.maxIteratorResultItems)
-			value := make([]json.RawMessage, len(iteratorValues))
-			for j := range iteratorValues {
-				value[j], err = stackitem.ToJSONWithTypes(iteratorValues[j])
-				if err != nil {
-					r.FaultException += fmt.Sprintf("%sjson error: %v", faultSep, err)
-					break arrloop
-				}
-			}
+			iteratorID := uuid.NewString()
 			data, err = json.Marshal(iteratorAux{
 				Type:      stackitem.InteropT.String(),
-				Value:     value,
-				Truncated: truncated,
+				Interface: iteratorInterfaceName,
+				ID:        iteratorID,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal iterator: %w", err)
+				r.FaultException += fmt.Sprintf("%sjson error: failed to marshal iterator: %v", faultSep, err)
+				break
+			}
+			if sessionsEnabled {
+				iterators = append(iterators, ServerIterator{
+					ID:   iteratorID,
+					Item: r.Stack[i],
+				})
 			}
 		} else {
 			data, err = stackitem.ToJSONWithTypes(r.Stack[i])
@@ -133,6 +147,13 @@ arrloop:
 			}
 		}
 		arr[i] = data
+	}
+
+	if sessionsEnabled && len(iterators) != 0 {
+		sessionID = uuid.NewString()
+		r.onNewSession(sessionID, iterators, r.Finalize)
+	} else {
+		defer r.Finalize()
 	}
 
 	if err == nil {
@@ -153,6 +174,7 @@ arrloop:
 		Notifications: r.Notifications,
 		Transaction:   txbytes,
 		Diagnostics:   r.Diagnostics,
+		Session:       sessionID,
 	}
 	if len(r.FaultException) != 0 {
 		aux.FaultException = &r.FaultException
@@ -167,6 +189,12 @@ func (r *Invoke) UnmarshalJSON(data []byte) error {
 	if err = json.Unmarshal(data, aux); err != nil {
 		return err
 	}
+	if len(aux.Session) != 0 {
+		r.Session, err = uuid.Parse(aux.Session)
+		if err != nil {
+			return fmt.Errorf("failed to parse session ID: %w", err)
+		}
+	}
 	var arr []json.RawMessage
 	if err = json.Unmarshal(aux.Stack, &arr); err == nil {
 		st := make([]stackitem.Item, len(arr))
@@ -178,20 +206,17 @@ func (r *Invoke) UnmarshalJSON(data []byte) error {
 			if st[i].Type() == stackitem.InteropT {
 				iteratorAux := new(iteratorAux)
 				if json.Unmarshal(arr[i], iteratorAux) == nil {
-					iteratorValues := make([]stackitem.Item, len(iteratorAux.Value))
-					for j := range iteratorValues {
-						iteratorValues[j], err = stackitem.FromJSONWithTypes(iteratorAux.Value[j])
-						if err != nil {
-							err = fmt.Errorf("failed to unmarshal iterator values: %w", err)
-							break
-						}
+					if iteratorAux.Interface != iteratorInterfaceName {
+						err = fmt.Errorf("unknown InteropInterface: %s", iteratorAux.Interface)
 					}
-
+					iID, err := uuid.Parse(iteratorAux.ID) // iteratorAux.ID is always non-empty, see https://github.com/neo-project/neo-modules/pull/715#discussion_r897635424.
+					if err != nil {
+						break
+					}
 					// it's impossible to restore initial iterator type; also iterator is almost
-					// useless outside of the VM, thus let's replace it with a special structure.
+					// useless outside the VM, thus let's replace it with a special structure.
 					st[i] = stackitem.NewInterop(Iterator{
-						Values:    iteratorValues,
-						Truncated: iteratorAux.Truncated,
+						ID: iID,
 					})
 				}
 			}

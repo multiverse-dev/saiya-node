@@ -118,7 +118,7 @@ func (c *Client) NNSIsAvailable(nnsHash util.Uint160, name string) (bool, error)
 
 // NNSGetAllRecords returns all records for a given name from NNS service.
 func (c *Client) NNSGetAllRecords(nnsHash util.Uint160, name string) ([]nns.RecordState, error) {
-	result, err := c.InvokeFunction(nnsHash, "getAllRecords", []smartcontract.Parameter{
+	result, err := c.InvokeAndPackIteratorResults(nnsHash, "getAllRecords", []smartcontract.Parameter{
 		{
 			Type:  smartcontract.StringType,
 			Value: name,
@@ -132,7 +132,7 @@ func (c *Client) NNSGetAllRecords(nnsHash util.Uint160, name string) ([]nns.Reco
 		return nil, err
 	}
 
-	arr, err := topIterableFromStack(result.Stack, nns.RecordState{})
+	arr, err := unwrapTopStackItem(result.Stack, nns.RecordState{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token IDs from stack: %w", err)
 	}

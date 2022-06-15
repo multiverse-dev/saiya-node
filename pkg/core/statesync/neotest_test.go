@@ -301,7 +301,6 @@ func TestStateSyncModule_RestoreBasicChain(t *testing.T) {
 	basicchain.Init(t, "../../../", e)
 
 	// make spout chain higher that latest state sync point (add several blocks up to stateSyncPoint+2)
-	e.AddNewBlock(t)
 	require.Equal(t, stateSyncPoint+2, int(bcSpout.BlockHeight()))
 
 	boltCfg := func(c *config.ProtocolConfiguration) {

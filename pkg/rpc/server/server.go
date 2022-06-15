@@ -73,6 +73,9 @@ type (
 		started          *atomic.Bool
 		errChan          chan error
 
+		sessionsLock sync.Mutex
+		sessions     map[string]*session
+
 		subsLock          sync.RWMutex
 		subscribers       map[*subscriber]bool
 		blockSubs         int
@@ -85,6 +88,15 @@ type (
 		notificationCh    chan *subscriptions.NotificationEvent
 		transactionCh     chan *transaction.Transaction
 		notaryRequestCh   chan mempoolevent.Event
+	}
+
+	// session holds a set of iterators got after invoke* call with corresponding
+	// finalizer and session expiration time.
+	session struct {
+		iteratorsLock sync.Mutex
+		iterators     []result.ServerIterator
+		till          time.Time
+		finalize      func()
 	}
 )
 
@@ -149,6 +161,8 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"submitblock":                  (*Server).submitBlock,
 	"submitnotaryrequest":          (*Server).submitNotaryRequest,
 	"submitoracleresponse":         (*Server).submitOracleResponse,
+	"terminatesession":             (*Server).terminateSession,
+	"traverseiterator":             (*Server).traverseIterator,
 	"validateaddress":              (*Server).validateAddress,
 	"verifyproof":                  (*Server).verifyProof,
 }
@@ -198,6 +212,8 @@ func New(chain blockchainer.Blockchainer, conf rpc.Config, coreServer *network.S
 		started:          atomic.NewBool(false),
 		errChan:          errChan,
 
+		sessions: make(map[string]*session),
+
 		subscribers: make(map[*subscriber]bool),
 		// These are NOT buffered to preserve original order of events.
 		blockCh:         make(chan *block.Block),
@@ -228,6 +244,7 @@ func (s *Server) Start() {
 	s.log.Info("starting rpc-server", zap.String("endpoint", s.Addr))
 
 	go s.handleSubEvents()
+	go s.handleSessions()
 	if cfg := s.config.TLSConfig; cfg.Enabled {
 		s.https.Handler = http.HandlerFunc(s.handleHTTPRequest)
 		s.log.Info("starting rpc-server (https)", zap.String("endpoint", s.https.Addr))
@@ -683,8 +700,7 @@ func (s *Server) getNEP11Tokens(h util.Uint160, acc util.Uint160, bw *io.BufBinW
 	}
 	defer finalize()
 	if (item.Type() == stackitem.InteropT) && iterator.IsIterator(item) {
-		vals, _ := iterator.Values(item, s.config.MaxNEP11Tokens)
-		return vals, nil
+		return iterator.Values(item, s.config.MaxNEP11Tokens), nil
 	}
 	return nil, fmt.Errorf("invalid `tokensOf` result type %s", item.String())
 }
@@ -1847,7 +1863,153 @@ func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash
 	if err != nil {
 		faultException = err.Error()
 	}
-	return result.NewInvoke(ic, script, faultException, s.config.MaxIteratorResultItems), nil
+	var registerSession result.OnNewSession
+	if s.config.SessionEnabled {
+		registerSession = s.registerSession
+	}
+	return result.NewInvoke(ic, script, faultException, registerSession), nil
+}
+
+// registerSession is a callback used to add new iterator session to the sessions list.
+// It performs no check whether sessions are enabled.
+func (s *Server) registerSession(sessionID string, iterators []result.ServerIterator, finalize func()) {
+	s.sessionsLock.Lock()
+	sess := &session{
+		iterators: iterators,
+		finalize:  finalize,
+		till:      time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime)),
+	}
+	s.sessions[sessionID] = sess
+	s.sessionsLock.Unlock()
+}
+
+func (s *Server) handleSessions() {
+	if !s.config.SessionEnabled {
+		return
+	}
+	s.log.Info("rpc-server iterator sessions are enabled")
+	var (
+		finalizationInterval = time.Duration(s.config.SessionExpirationTime) * time.Second
+		finalizationTicker   = time.NewTicker(finalizationInterval)
+	)
+
+	defer func() {
+		finalizationTicker.Stop()
+		s.sessionsLock.Lock()
+		defer s.sessionsLock.Unlock()
+		for _, session := range s.sessions {
+			// Concurrent iterator traversal may still be in process, thus need to protect iterators access.
+			session.iteratorsLock.Lock()
+			session.finalize()
+			session.iteratorsLock.Unlock()
+		}
+		s.sessions = nil
+	}()
+
+	for {
+		select {
+		case <-s.shutdown:
+			return
+		case <-finalizationTicker.C:
+			s.sessionsLock.Lock()
+			if len(s.sessions) == 0 {
+				s.sessionsLock.Unlock()
+				continue
+			}
+			now := time.Now()
+			staleSessions := s.sessions
+			// We can easily reuse existing map, but the ticker has tick period equal to the session expiration, so likely,
+			// the whole set of sessions will be removed from map at the subsequent tick, it's cheaper than using `delete`
+			// for all set of elements.
+			s.sessions = make(map[string]*session)
+			for id, sess := range staleSessions {
+				if sess.till.Before(now) {
+					sess.iteratorsLock.Lock()
+					sess.finalize()
+					sess.iteratorsLock.Unlock()
+				} else {
+					s.sessions[id] = sess
+				}
+			}
+			s.sessionsLock.Unlock()
+		}
+	}
+}
+
+func (s *Server) traverseIterator(reqParams request.Params) (interface{}, *response.Error) {
+	if !s.config.SessionEnabled {
+		return nil, response.NewInvalidRequestError("sessions are disabled")
+	}
+	sID, err := reqParams.Value(0).GetUUID()
+	if err != nil {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid session ID: %s", err))
+	}
+	iID, err := reqParams.Value(1).GetUUID()
+	if err != nil {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid iterator ID: %s", err))
+	}
+	count, err := reqParams.Value(2).GetInt()
+	if err != nil {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid iterator items count: %s", err))
+	}
+	if err := checkInt32(count); err != nil {
+		return nil, response.NewInvalidParamsError("invalid iterator items count: not an int32")
+	}
+	if count > s.config.MaxIteratorResultItems {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("iterator items count is out of range (%d at max)", s.config.MaxIteratorResultItems))
+	}
+	
+	s.sessionsLock.Lock()
+	session, ok := s.sessions[sID.String()]
+	if !ok {
+		s.sessionsLock.Unlock()
+		return []json.RawMessage{}, nil
+	}
+	session.till = time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime))
+	session.iteratorsLock.Lock()
+	s.sessionsLock.Unlock()
+
+	var (
+		iIDStr = iID.String()
+		iVals  []stackitem.Item
+	)
+	for _, it := range session.iterators {
+		if iIDStr == it.ID {
+			iVals = iterator.Values(it.Item, count)
+			break
+		}
+	}
+	session.iteratorsLock.Unlock()
+
+	result := make([]json.RawMessage, len(iVals))
+	for j := range iVals {
+		result[j], err = stackitem.ToJSONWithTypes(iVals[j])
+		if err != nil {
+			return nil, response.NewInternalServerError(fmt.Sprintf("failed to marshal iterator value: %s", err))
+		}
+	}
+	return result, nil
+}
+
+func (s *Server) terminateSession(reqParams request.Params) (interface{}, *response.Error) {
+	if !s.config.SessionEnabled {
+		return nil, response.NewInvalidRequestError("sessions are disabled")
+	}
+	sID, err := reqParams.Value(0).GetUUID()
+	if err != nil {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid session ID: %s", err))
+	}
+	strSID := sID.String()
+	s.sessionsLock.Lock()
+	defer s.sessionsLock.Unlock()
+	session, ok := s.sessions[strSID]
+	if ok {
+		session.iteratorsLock.Lock()
+		session.finalize()
+		delete(s.sessions, strSID)
+		session.iteratorsLock.Unlock()
+	}
+	return ok, nil
 }
 
 // submitBlock broadcasts a raw block over the NEO network.

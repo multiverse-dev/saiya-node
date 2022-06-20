@@ -10,6 +10,8 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/core/state"
 	"github.com/nspcc-dev/neo-go/pkg/core/storage"
 	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
+	"github.com/nspcc-dev/neo-go/pkg/smartcontract/trigger"
+	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/nspcc-dev/neo-go/pkg/vm"
 	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
 )
@@ -17,20 +19,30 @@ import (
 // Invoke represents a code invocation result and is used by several RPC calls
 // that invoke functions, scripts and generic bytecode.
 type Invoke struct {
-	State          string
-	GasConsumed    int64
-	Script         []byte
-	Stack          []stackitem.Item
-	FaultException string
-	Notifications  []state.NotificationEvent
-	Transaction    *transaction.Transaction
-	Diagnostics    *InvokeDiag
-	Session        uuid.UUID
-	finalize       func()
-	onNewSession   OnNewSession
+	State            string
+	GasConsumed      int64
+	Script           []byte
+	Stack            []stackitem.Item
+	FaultException   string
+	Notifications    []state.NotificationEvent
+	Transaction      *transaction.Transaction
+	Diagnostics      *InvokeDiag
+	Session          uuid.UUID
+	finalize         func()
+	onNewSession     OnNewSession
+	invocationParams InvocationParams
 }
 
-type OnNewSession func(sessionID string, iterators []ServerIterator, finalize func())
+type OnNewSession func(params InvocationParams, sessionID string, iterators []IteratorIdentifier)
+
+// InvocationParams is a set of parameters used for invoke* calls.
+type InvocationParams struct {
+	Trigger            trigger.Type
+	Script             []byte
+	ContractScriptHash util.Uint160
+	Transaction        *transaction.Transaction
+	NextBlockHeight    uint32
+}
 
 // InvokeDiag is an additional diagnostic data for invocation.
 type InvokeDiag struct {
@@ -39,7 +51,7 @@ type InvokeDiag struct {
 }
 
 // NewInvoke returns a new Invoke structure with the given fields set.
-func NewInvoke(ic *interop.Context, script []byte, faultException string, registerSession OnNewSession) *Invoke {
+func NewInvoke(ic *interop.Context, script []byte, faultException string, registerSession OnNewSession, params InvocationParams) *Invoke {
 	var diag *InvokeDiag
 	tree := ic.VM.GetInvocationTree()
 	if tree != nil {
@@ -53,15 +65,16 @@ func NewInvoke(ic *interop.Context, script []byte, faultException string, regist
 		notifications = make([]state.NotificationEvent, 0)
 	}
 	return &Invoke{
-		State:          ic.VM.State().String(),
-		GasConsumed:    ic.VM.GasConsumed(),
-		Script:         script,
-		Stack:          ic.VM.Estack().ToArray(),
-		FaultException: faultException,
-		Notifications:  notifications,
-		Diagnostics:    diag,
-		finalize:       ic.Finalize,
-		onNewSession:   registerSession,
+		State:            ic.VM.State().String(),
+		GasConsumed:      ic.VM.GasConsumed(),
+		Script:           script,
+		Stack:            ic.VM.Estack().ToArray(),
+		FaultException:   faultException,
+		Notifications:    notifications,
+		Diagnostics:      diag,
+		finalize:         ic.Finalize,
+		onNewSession:     registerSession,
+		invocationParams: params,
 	}
 }
 
@@ -91,10 +104,10 @@ type Iterator struct {
 	ID uuid.UUID
 }
 
-// ServerIterator represents Iterator on the server side.
-type ServerIterator struct {
-	ID   string
-	Item stackitem.Item
+// IteratorIdentifier represents Iterator identifier on the server side.
+type IteratorIdentifier struct {
+	ID         string
+	StackIndex int
 }
 
 // Finalize releases resources occupied by Iterators created at the script invocation.
@@ -115,8 +128,10 @@ func (r Invoke) MarshalJSON() ([]byte, error) {
 		arr             = make([]json.RawMessage, len(r.Stack))
 		sessionsEnabled = r.onNewSession != nil
 		sessionID       string
-		iterators       []ServerIterator
+		iterators       []IteratorIdentifier
 	)
+	// Always call the finalizer, iterator traverse will be powered by historic MPT-based storage.
+	defer r.Finalize()
 	if len(r.FaultException) != 0 {
 		faultSep = " / "
 	}
@@ -134,9 +149,9 @@ func (r Invoke) MarshalJSON() ([]byte, error) {
 				break
 			}
 			if sessionsEnabled {
-				iterators = append(iterators, ServerIterator{
-					ID:   iteratorID,
-					Item: r.Stack[i],
+				iterators = append(iterators, IteratorIdentifier{
+					ID:         iteratorID,
+					StackIndex: i,
 				})
 			}
 		} else {
@@ -151,11 +166,8 @@ func (r Invoke) MarshalJSON() ([]byte, error) {
 
 	if sessionsEnabled && len(iterators) != 0 {
 		sessionID = uuid.NewString()
-		r.onNewSession(sessionID, iterators, r.Finalize)
-	} else {
-		defer r.Finalize()
+		r.onNewSession(r.invocationParams, sessionID, iterators)
 	}
-
 	if err == nil {
 		st, err = json.Marshal(arr)
 		if err != nil {

@@ -93,10 +93,12 @@ type (
 	// session holds a set of iterators got after invoke* call with corresponding
 	// finalizer and session expiration time.
 	session struct {
-		iteratorsLock sync.Mutex
-		iterators     []result.ServerIterator
-		till          time.Time
-		finalize      func()
+		params              result.InvocationParams
+		iteratorsLock       sync.Mutex
+		iteratorIdentifiers []result.IteratorIdentifier
+		iterators           []stackitem.Item
+		till                time.Time
+		finalize            func()
 	}
 )
 
@@ -1817,12 +1819,7 @@ func (s *Server) getFakeNextBlock(nextBlockHeight uint32) (*block.Block, error) 
 	return b, nil
 }
 
-// runScriptInVM runs the given script in a new test VM and returns the invocation
-// result. The script is either a simple script in case of `application` trigger,
-// witness invocation script in case of `verification` trigger (it pushes `verify`
-// arguments on stack before verification). In case of contract verification
-// contractScriptHash should be specified.
-func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash util.Uint160, tx *transaction.Transaction, b *block.Block, verbose bool) (*result.Invoke, *response.Error) {
+func (s *Server) prepareInvocationContext(t trigger.Type, script []byte, contractScriptHash util.Uint160, tx *transaction.Transaction, b *block.Block, verbose bool) (*interop.Context, *response.Error) {
 	var (
 		err error
 		ic  *interop.Context
@@ -1858,7 +1855,20 @@ func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash
 	} else {
 		ic.VM.LoadScriptWithFlags(script, callflag.All)
 	}
-	err = ic.VM.Run()
+	return ic, nil
+}
+
+// runScriptInVM runs the given script in a new test VM and returns the invocation
+// result. The script is either a simple script in case of `application` trigger,
+// witness invocation script in case of `verification` trigger (it pushes `verify`
+// arguments on stack before verification). In case of contract verification
+// contractScriptHash should be specified.
+func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash util.Uint160, tx *transaction.Transaction, b *block.Block, verbose bool) (*result.Invoke, *response.Error) {
+	ic, respErr := s.prepareInvocationContext(t, script, contractScriptHash, tx, b, verbose)
+	if respErr != nil {
+		return nil, respErr
+	}
+	err := ic.VM.Run()
 	var faultException string
 	if err != nil {
 		faultException = err.Error()
@@ -1867,17 +1877,23 @@ func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash
 	if s.config.SessionEnabled {
 		registerSession = s.registerSession
 	}
-	return result.NewInvoke(ic, script, faultException, registerSession), nil
+	return result.NewInvoke(ic, script, faultException, registerSession, result.InvocationParams{
+		Trigger:            t,
+		Script:             script,
+		ContractScriptHash: contractScriptHash,
+		Transaction:        tx,
+		NextBlockHeight:    ic.Block.Index,
+	}), nil
 }
 
 // registerSession is a callback used to add new iterator session to the sessions list.
 // It performs no check whether sessions are enabled.
-func (s *Server) registerSession(sessionID string, iterators []result.ServerIterator, finalize func()) {
+func (s *Server) registerSession(params result.InvocationParams, sessionID string, iterators []result.IteratorIdentifier) {
 	s.sessionsLock.Lock()
 	sess := &session{
-		iterators: iterators,
-		finalize:  finalize,
-		till:      time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime)),
+		params:              params,
+		iteratorIdentifiers: iterators,
+		till:                time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime)),
 	}
 	s.sessions[sessionID] = sess
 	s.sessionsLock.Unlock()
@@ -1898,9 +1914,11 @@ func (s *Server) handleSessions() {
 		s.sessionsLock.Lock()
 		defer s.sessionsLock.Unlock()
 		for _, session := range s.sessions {
-			// Concurrent iterator traversal may still be in process, thus need to protect iterators access.
+			// Concurrent iterator traversal may still be in process, thus need to protect iteratorIdentifiers access.
 			session.iteratorsLock.Lock()
-			session.finalize()
+			if session.finalize != nil {
+				session.finalize()
+			}
 			session.iteratorsLock.Unlock()
 		}
 		s.sessions = nil
@@ -1925,7 +1943,9 @@ func (s *Server) handleSessions() {
 			for id, sess := range staleSessions {
 				if sess.till.Before(now) {
 					sess.iteratorsLock.Lock()
-					sess.finalize()
+					if sess.finalize != nil {
+						sess.finalize()
+					}
 					sess.iteratorsLock.Unlock()
 				} else {
 					s.sessions[id] = sess
@@ -1958,24 +1978,57 @@ func (s *Server) traverseIterator(reqParams request.Params) (interface{}, *respo
 	if count > s.config.MaxIteratorResultItems {
 		return nil, response.NewInvalidParamsError(fmt.Sprintf("iterator items count is out of range (%d at max)", s.config.MaxIteratorResultItems))
 	}
-	
+
 	s.sessionsLock.Lock()
 	session, ok := s.sessions[sID.String()]
 	if !ok {
 		s.sessionsLock.Unlock()
 		return []json.RawMessage{}, nil
 	}
-	session.till = time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime))
 	session.iteratorsLock.Lock()
+	// Perform `till` update only after session.iteratorsLock is taken in order to have more
+	// precise session lifetime.
+	session.till = time.Now().Add(time.Second * time.Duration(s.config.SessionExpirationTime))
 	s.sessionsLock.Unlock()
 
 	var (
-		iIDStr = iID.String()
-		iVals  []stackitem.Item
+		iIDStr  = iID.String()
+		iVals   []stackitem.Item
+		respErr *response.Error
 	)
-	for _, it := range session.iterators {
+	for i, it := range session.iteratorIdentifiers {
 		if iIDStr == it.ID {
-			iVals = iterator.Values(it.Item, count)
+			if len(session.iterators) == 0 {
+				// We can't easily create a DB snapshot to keep the session alive for a long time,
+				// thus, we'll use historic calls approach and MPT-based storage for iterator
+				// traverse.
+				var (
+					b  *block.Block
+					ic *interop.Context
+				)
+				b, err = s.getFakeNextBlock(session.params.NextBlockHeight)
+				if err != nil {
+					session.iteratorsLock.Unlock()
+					return nil, response.NewInternalServerError(fmt.Sprintf("unable to prepare block for historic call: %s", err))
+				}
+				ic, respErr = s.prepareInvocationContext(session.params.Trigger, session.params.Script, session.params.ContractScriptHash, session.params.Transaction, b, false)
+				if respErr != nil {
+					session.iteratorsLock.Unlock()
+					return nil, respErr
+				}
+				_ = ic.VM.Run() // No error check because FAULTed invocations could also contain iterator on stack.
+				stack := ic.VM.Estack().ToArray()
+				for _, itID := range session.iteratorIdentifiers {
+					j := itID.StackIndex
+					if (stack[j].Type() != stackitem.InteropT) || !iterator.IsIterator(stack[j]) {
+						session.iteratorsLock.Unlock()
+						return nil, response.NewInternalServerError(fmt.Sprintf("inconsistent historic call result: expected %s, got %s at stack position #%d", stackitem.InteropT, stack[j].Type(), j))
+					}
+					session.iterators = append(session.iterators, stack[j])
+				}
+				session.finalize = ic.Finalize
+			}
+			iVals = iterator.Values(session.iterators[i], count)
 			break
 		}
 	}
@@ -2004,8 +2057,12 @@ func (s *Server) terminateSession(reqParams request.Params) (interface{}, *respo
 	defer s.sessionsLock.Unlock()
 	session, ok := s.sessions[strSID]
 	if ok {
+		// Iterators access Seek channel under the hood; finalisator closes this channel, thus,
+		// we need to perform finalisation under iteratorsLock.
 		session.iteratorsLock.Lock()
-		session.finalize()
+		if session.finalize != nil {
+			session.finalize()
+		}
 		delete(s.sessions, strSID)
 		session.iteratorsLock.Unlock()
 	}

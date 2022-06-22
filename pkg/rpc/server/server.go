@@ -1868,7 +1868,8 @@ func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash
 	if respErr != nil {
 		return nil, respErr
 	}
-	err := ic.VM.Run()
+	// Always call the finalizer, iterator traverse will be powered by historic MPT-based storage.
+	err := ic.Exec()
 	var faultException string
 	if err != nil {
 		faultException = err.Error()

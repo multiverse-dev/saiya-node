@@ -28,7 +28,6 @@ type Invoke struct {
 	Transaction      *transaction.Transaction
 	Diagnostics      *InvokeDiag
 	Session          uuid.UUID
-	finalize         func()
 	onNewSession     OnNewSession
 	invocationParams InvocationParams
 }
@@ -72,7 +71,6 @@ func NewInvoke(ic *interop.Context, script []byte, faultException string, regist
 		FaultException:   faultException,
 		Notifications:    notifications,
 		Diagnostics:      diag,
-		finalize:         ic.Finalize,
 		onNewSession:     registerSession,
 		invocationParams: params,
 	}
@@ -110,15 +108,6 @@ type IteratorIdentifier struct {
 	StackIndex int
 }
 
-// Finalize releases resources occupied by Iterators created at the script invocation.
-// This method will be called automatically on Invoke marshalling or by the Server's
-// sessions handler.
-func (r *Invoke) Finalize() {
-	if r.finalize != nil {
-		r.finalize()
-	}
-}
-
 // MarshalJSON implements the json.Marshaler.
 func (r Invoke) MarshalJSON() ([]byte, error) {
 	var (
@@ -130,8 +119,6 @@ func (r Invoke) MarshalJSON() ([]byte, error) {
 		sessionID       string
 		iterators       []IteratorIdentifier
 	)
-	// Always call the finalizer, iterator traverse will be powered by historic MPT-based storage.
-	defer r.Finalize()
 	if len(r.FaultException) != 0 {
 		faultSep = " / "
 	}

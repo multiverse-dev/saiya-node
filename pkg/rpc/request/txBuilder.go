@@ -83,12 +83,16 @@ func ExpandArrayIntoScript(script *io.BinWriter, slice []Param) error {
 			if err != nil {
 				return err
 			}
-			err = ExpandArrayIntoScript(script, val)
-			if err != nil {
-				return err
+			if len(val) == 0 {
+				emit.Opcodes(script, opcode.NEWARRAY0)
+			} else {
+				err = ExpandArrayIntoScript(script, val)
+				if err != nil {
+					return err
+				}
+				emit.Int(script, int64(len(val)))
+				emit.Opcodes(script, opcode.PACK)
 			}
-			emit.Int(script, int64(len(val)))
-			emit.Opcodes(script, opcode.PACK)
 		case smartcontract.AnyType:
 			if fp.Value.IsNull() {
 				emit.Opcodes(script, opcode.PUSHNULL)
@@ -107,12 +111,16 @@ func CreateFunctionInvocationScript(contract util.Uint160, method string, param 
 	if param == nil {
 		emit.Opcodes(script.BinWriter, opcode.NEWARRAY0)
 	} else if slice, err := param.GetArray(); err == nil {
-		err = ExpandArrayIntoScript(script.BinWriter, slice)
-		if err != nil {
-			return nil, err
+		if len(slice) == 0 {
+			emit.Opcodes(script.BinWriter, opcode.NEWARRAY0)
+		} else {
+			err = ExpandArrayIntoScript(script.BinWriter, slice)
+			if err != nil {
+				return nil, err
+			}
+			emit.Int(script.BinWriter, int64(len(slice)))
+			emit.Opcodes(script.BinWriter, opcode.PACK)
 		}
-		emit.Int(script.BinWriter, int64(len(slice)))
-		emit.Opcodes(script.BinWriter, opcode.PACK)
 	} else {
 		return nil, fmt.Errorf("failed to convert %s to script parameter", param)
 	}

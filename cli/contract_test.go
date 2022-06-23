@@ -27,6 +27,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
 	"github.com/nspcc-dev/neo-go/pkg/wallet"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestCalcHash(t *testing.T) {
@@ -613,12 +614,19 @@ func TestComlileAndInvokeFunction(t *testing.T) {
 		"--rpc-endpoint", "http://"+e.RPC.Addr,
 		"--in", nefName, "--", address.Uint160ToString(util.Uint160{1, 2, 3}))
 
-	e.In.WriteString("one\r")
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cfg := config.Wallet{
+		Path:     validatorWallet,
+		Password: "one",
+	}
+	yml, err := yaml.Marshal(cfg)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, yml, 0666))
 	e.Run(t, "neo-go", "contract", "deploy",
 		"--rpc-endpoint", "http://"+e.RPC.Addr, "--force",
-		"--wallet", validatorWallet, "--address", validatorAddr,
+		"--wallet-config", configPath, "--address", validatorAddr,
 		"--in", nefName, "--manifest", manifestName)
-
 	e.checkTxPersisted(t, "Sent invocation transaction ")
 	line, err := e.Out.ReadString('\n')
 	require.NoError(t, err)
@@ -712,6 +720,10 @@ func TestComlileAndInvokeFunction(t *testing.T) {
 			e.In.WriteString("one\r")
 			e.In.WriteString("y\r")
 			e.Run(t, append(cmd, "--wallet", validatorWallet, h.StringLE(), "getValue")...)
+		})
+		t.Run("good: from wallet config", func(t *testing.T) {
+			e.In.WriteString("y\r")
+			e.Run(t, append(cmd, "--wallet-config", configPath, h.StringLE(), "getValue")...)
 		})
 
 		cmd = append(cmd, "--wallet", validatorWallet, "--address", validatorAddr)

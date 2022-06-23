@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/nspcc-dev/neo-go/cli/flags"
+	cliwallet "github.com/nspcc-dev/neo-go/cli/wallet"
 	"github.com/nspcc-dev/neo-go/pkg/core/state"
 	"github.com/nspcc-dev/neo-go/pkg/smartcontract/manifest"
 	"github.com/nspcc-dev/neo-go/pkg/smartcontract/nef"
@@ -16,10 +17,20 @@ import (
 
 func manifestAddGroup(ctx *cli.Context) error {
 	walletPath := ctx.String("wallet")
-	if len(walletPath) == 0 {
+	walletConfigPath := ctx.String("wallet-config")
+	if len(walletPath) == 0 && len(walletConfigPath) == 0 {
 		return cli.NewExitError(errNoWallet, 1)
 	}
 
+	var pass *string
+	if len(walletConfigPath) != 0 {
+		cfg, err := cliwallet.ReadWalletConfig(walletConfigPath)
+		if err != nil {
+			return cli.NewExitError(err, 1)
+		}
+		walletPath = cfg.Path
+		pass = &cfg.Password
+	}
 	w, err := wallet.NewWalletFromFile(walletPath)
 	if err != nil {
 		return cli.NewExitError(err, 1)
@@ -49,7 +60,7 @@ func manifestAddGroup(ctx *cli.Context) error {
 
 	h := state.CreateContractHash(sender, nf.Checksum, m.Name)
 
-	gAcc, err := getUnlockedAccount(w, addr)
+	gAcc, err := getUnlockedAccount(w, addr, pass)
 	if err != nil {
 		return err
 	}

@@ -26,7 +26,7 @@ var (
 )
 
 type Contracts struct {
-	GAS        *GAS
+	SAI        *SAI
 	Ledger     *Ledger
 	Designate  *Designate
 	Management *Management
@@ -38,8 +38,8 @@ func NewContracts(cfg config.ProtocolConfiguration) *Contracts {
 	cs := &Contracts{
 		Contracts: make([]state.NativeContract, 0, 4),
 	}
-	cs.GAS = NewGAS(cfg.InitialGASSupply)
-	cs.Contracts = append(cs.Contracts, cs.GAS.NativeContract)
+	cs.SAI = NewSAI(cfg.InitialSAISupply)
+	cs.Contracts = append(cs.Contracts, cs.SAI.NativeContract)
 	cs.Ledger = NewLedger()
 	cs.Contracts = append(cs.Contracts, cs.Ledger.NativeContract)
 	cs.Management = NewManagement()

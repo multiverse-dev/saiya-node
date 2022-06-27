@@ -110,8 +110,6 @@ func (p *Pool) Get(h common.Hash) *payload.Extensible {
 	return payload
 }
 
-const extensibleVerifyMaxGAS = 6000000
-
 // RemoveStale removes invalid payloads after block processing.
 func (p *Pool) RemoveStale(index uint32) {
 	p.lock.Lock()

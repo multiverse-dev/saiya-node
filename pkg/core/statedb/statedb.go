@@ -87,15 +87,15 @@ func (s *StateDB) GetCommittedState(address common.Address, key common.Hash) com
 func (s *StateDB) CreateAccount(common.Address) {}
 
 func (s *StateDB) SubBalance(address common.Address, amount *big.Int) {
-	s.bc.Contracts().GAS.SubBalance(s.CurrentStore().Simple, address, amount)
+	s.bc.Contracts().SAI.SubBalance(s.CurrentStore().Simple, address, amount)
 }
 
 func (s *StateDB) AddBalance(address common.Address, amount *big.Int) {
-	s.bc.Contracts().GAS.AddBalance(s.CurrentStore().Simple, address, amount)
+	s.bc.Contracts().SAI.AddBalance(s.CurrentStore().Simple, address, amount)
 }
 
 func (s *StateDB) GetBalance(address common.Address) *big.Int {
-	return s.bc.Contracts().GAS.GetBalance(s.CurrentStore().Simple, address)
+	return s.bc.Contracts().SAI.GetBalance(s.CurrentStore().Simple, address)
 }
 
 func (s *StateDB) GetNonce(address common.Address) uint64 {
@@ -160,7 +160,7 @@ func (s *StateDB) Exist(address common.Address) bool {
 }
 
 func (s *StateDB) Empty(address common.Address) bool {
-	if s.bc.Contracts().GAS.GetBalance(s.CurrentStore().Simple, address).Sign() > 0 {
+	if s.bc.Contracts().SAI.GetBalance(s.CurrentStore().Simple, address).Sign() > 0 {
 		return false
 	}
 	if sc := s.bc.Contracts().Management.GetContract(s.CurrentStore().Simple, address); sc != nil {

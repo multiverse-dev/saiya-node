@@ -15,35 +15,35 @@ import (
 
 const (
 	prefixAccount = 20
-	GASDecimal    = 18
+	SAIDecimal    = 18
 )
 
 var (
-	GASAddress     common.Address = common.Address(common.BytesToAddress([]byte{nativeids.GAS}))
+	SAIAddress     common.Address = common.Address(common.BytesToAddress([]byte{nativeids.SAI}))
 	totalSupplyKey                = []byte{11}
 )
 
-type GAS struct {
+type SAI struct {
 	state.NativeContract
 	symbol        string
 	decimals      int64
 	initialSupply uint64
 }
 
-func NewGAS(init uint64) *GAS {
-	g := &GAS{
+func NewSAI(init uint64) *SAI {
+	g := &SAI{
 		NativeContract: state.NativeContract{
-			Name: nativenames.GAS,
+			Name: nativenames.SAI,
 			Contract: state.Contract{
-				Address: GASAddress,
+				Address: SAIAddress,
 				Code:    []byte{},
 			},
 		},
 		initialSupply: init,
 	}
 
-	g.symbol = "GAS"
-	g.decimals = GASDecimal
+	g.symbol = "SAI"
+	g.decimals = SAIDecimal
 
 	return g
 }
@@ -52,7 +52,7 @@ func makeAccountKey(h common.Address) []byte {
 	return makeAddressKey(prefixAccount, h)
 }
 
-func (g *GAS) initialize(ic InteropContext) error {
+func (g *SAI) initialize(ic InteropContext) error {
 	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
 		return ErrInitialize
 	}
@@ -60,12 +60,12 @@ func (g *GAS) initialize(ic InteropContext) error {
 	if err != nil {
 		return err
 	}
-	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(GASDecimal), nil)
+	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(SAIDecimal), nil)
 	total := big.NewInt(1).Mul(big.NewInt(int64(g.initialSupply)), wei)
 	return g.addTokens(ic.Dao(), addr, total)
 }
 
-func (g *GAS) increaseBalance(gs *GasState, amount *big.Int) error {
+func (g *SAI) increaseBalance(gs *GasState, amount *big.Int) error {
 	if amount.Sign() == -1 && gs.Balance.CmpAbs(amount) == -1 {
 		return errors.New("insufficient funds")
 	}
@@ -73,7 +73,7 @@ func (g *GAS) increaseBalance(gs *GasState, amount *big.Int) error {
 	return nil
 }
 
-func (g *GAS) getTotalSupply(s *dao.Simple) *big.Int {
+func (g *SAI) getTotalSupply(s *dao.Simple) *big.Int {
 	si := s.GetStorageItem(g.Address, totalSupplyKey)
 	if si == nil {
 		return nil
@@ -81,11 +81,11 @@ func (g *GAS) getTotalSupply(s *dao.Simple) *big.Int {
 	return big.NewInt(0).SetBytes(si)
 }
 
-func (g *GAS) saveTotalSupply(s *dao.Simple, supply *big.Int) {
+func (g *SAI) saveTotalSupply(s *dao.Simple, supply *big.Int) {
 	s.PutStorageItem(g.Address, totalSupplyKey, supply.Bytes())
 }
 
-func (g *GAS) getGasState(s *dao.Simple, key []byte) (*GasState, error) {
+func (g *SAI) getGasState(s *dao.Simple, key []byte) (*GasState, error) {
 	si := s.GetStorageItem(g.Address, key)
 	if si == nil {
 		return nil, nil
@@ -98,7 +98,7 @@ func (g *GAS) getGasState(s *dao.Simple, key []byte) (*GasState, error) {
 	return gs, nil
 }
 
-func (g *GAS) putGasState(s *dao.Simple, key []byte, gs *GasState) error {
+func (g *SAI) putGasState(s *dao.Simple, key []byte, gs *GasState) error {
 	data, err := io.ToByteArray(gs)
 	if err != nil {
 		return err
@@ -107,7 +107,7 @@ func (g *GAS) putGasState(s *dao.Simple, key []byte, gs *GasState) error {
 	return nil
 }
 
-func (g *GAS) addTokens(s *dao.Simple, h common.Address, amount *big.Int) error {
+func (g *SAI) addTokens(s *dao.Simple, h common.Address, amount *big.Int) error {
 	if amount.Sign() == 0 {
 		return nil
 	}
@@ -142,17 +142,17 @@ func (g *GAS) addTokens(s *dao.Simple, h common.Address, amount *big.Int) error 
 	return nil
 }
 
-func (g *GAS) AddBalance(s *dao.Simple, h common.Address, amount *big.Int) {
+func (g *SAI) AddBalance(s *dao.Simple, h common.Address, amount *big.Int) {
 	g.addTokens(s, h, amount)
 }
 
-func (g *GAS) SubBalance(s *dao.Simple, h common.Address, amount *big.Int) {
+func (g *SAI) SubBalance(s *dao.Simple, h common.Address, amount *big.Int) {
 	neg := big.NewInt(0)
 	neg.Neg(amount)
 	g.addTokens(s, h, neg)
 }
 
-func (g *GAS) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
+func (g *SAI) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
 	acc := new(GasState)
 	err := io.FromByteArray(acc, *si)
 	if err != nil {
@@ -161,7 +161,7 @@ func (g *GAS) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
 	return acc.Balance, err
 }
 
-func (g *GAS) GetBalance(d *dao.Simple, h common.Address) *big.Int {
+func (g *SAI) GetBalance(d *dao.Simple, h common.Address) *big.Int {
 	key := makeAccountKey(h)
 	si := d.GetStorageItem(g.Address, key)
 	if si == nil {
@@ -174,7 +174,7 @@ func (g *GAS) GetBalance(d *dao.Simple, h common.Address) *big.Int {
 	return balance
 }
 
-func (g *GAS) RequiredGas(ic InteropContext, input []byte) uint64 {
+func (g *SAI) RequiredGas(ic InteropContext, input []byte) uint64 {
 	if len(input) < 1 {
 		return 0
 	}
@@ -186,7 +186,7 @@ func (g *GAS) RequiredGas(ic InteropContext, input []byte) uint64 {
 	}
 }
 
-func (g *GAS) Run(ic InteropContext, input []byte) ([]byte, error) {
+func (g *SAI) Run(ic InteropContext, input []byte) ([]byte, error) {
 	if len(input) < 1 {
 		return nil, ErrEmptyInput
 	}

@@ -42,14 +42,14 @@ func newNativeTokenCommands() []cli.Command {
 	return []cli.Command{
 		{
 			Name:      "balance",
-			Usage:     "get address GAS balance",
+			Usage:     "get address SAI balance",
 			UsageText: "balance --wallet <path> --rpc-endpoint <node> [--timeout <time>] [--address <address>]",
 			Action:    balance,
 			Flags:     balanceFlags,
 		},
 		{
 			Name:      "transfer",
-			Usage:     "transfer GAS to address",
+			Usage:     "transfer SAI to address",
 			UsageText: "transfer --wallet <path> --rpc-endpoint <node> [--from <fromAddress>] --to <toAddress> --amount <amount>",
 			Action:    transferNativeToken,
 			Flags:     transferFlags,

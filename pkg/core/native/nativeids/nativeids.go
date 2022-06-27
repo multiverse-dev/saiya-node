@@ -2,7 +2,7 @@ package nativeids
 
 const (
 	Policy      byte = 0xE0
-	GAS         byte = 0xE1
+	SAI         byte = 0xE1
 	Management  byte = 0xE2
 	Ledger      byte = 0xE3
 	Designation byte = 0xE4

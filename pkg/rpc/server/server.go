@@ -1315,7 +1315,7 @@ func (s *Server) getVersion(_ request.Params) (interface{}, *response.Error) {
 			MaxTransactionsPerBlock:     cfg.MaxTransactionsPerBlock,
 			MemoryPoolMaxTransactions:   cfg.MemPoolSize,
 			ValidatorsCount:             byte(len(validators)),
-			InitialGasDistribution:      cfg.InitialGASSupply,
+			InitialGasDistribution:      cfg.InitialSAISupply,
 		},
 	}, nil
 }

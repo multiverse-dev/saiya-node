@@ -504,7 +504,7 @@ func (c *Client) GetTransactionHeight(hash common.Hash) (uint32, error) {
 	return resp, nil
 }
 
-// GetUnclaimedGas returns unclaimed GAS amount for the specified address.
+// GetUnclaimedGas returns unclaimed SAI amount for the specified address.
 func (c *Client) GetUnclaimedGas(address string) (result.UnclaimedGas, error) {
 	var (
 		params = request.NewRawParams(address)

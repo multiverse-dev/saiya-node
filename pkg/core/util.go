@@ -42,7 +42,7 @@ func createGenesisBlock(cfg config.ProtocolConfiguration) (*block.Block, error) 
 				Value: big.NewInt(0),
 			}),
 			transaction.NewTx(&types.LegacyTx{
-				To:    &native.GASAddress,
+				To:    &native.SAIAddress,
 				Data:  initData,
 				Value: big.NewInt(0),
 			}),

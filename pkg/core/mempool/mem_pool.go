@@ -19,7 +19,7 @@ var (
 	// pool.
 	ErrInsufficientFunds = errors.New("insufficient funds")
 	// ErrConflict is returned when transaction being added is incompatible
-	// with the contents of the memory pool (Sender doesn't have enough GAS
+	// with the contents of the memory pool (Sender doesn't have enough SAI
 	// to pay for all transactions in the pool).
 	ErrConflict = errors.New("conflicts: insufficient funds for all pooled tx")
 	// ErrDup is returned when transaction being added is already present
@@ -135,7 +135,7 @@ func (mp *Pool) HasConflicts(t *transaction.Transaction, fee Feer) bool {
 }
 
 // tryAddSendersFee tries to add system fee and network fee to the total sender`s fee in mempool
-// and returns false if both balance check is required and sender has not enough GAS to pay.
+// and returns false if both balance check is required and sender has not enough SAI to pay.
 func (mp *Pool) tryAddSendersFee(tx *transaction.Transaction, feer Feer, needCheck bool) bool {
 	payer := tx.From()
 	senderFee, ok := mp.fees[payer]
@@ -157,7 +157,7 @@ func (mp *Pool) tryAddSendersFee(tx *transaction.Transaction, feer Feer, needChe
 }
 
 // checkBalance returns new cumulative fee balance for account or an error in
-// case sender doesn't have enough GAS to pay for the transaction.
+// case sender doesn't have enough SAI to pay for the transaction.
 func checkBalance(tx *transaction.Transaction, balance utilityBalanceAndFees) (big.Int, error) {
 	var txFee big.Int = *tx.Cost()
 	if balance.balance.Cmp(&txFee) < 0 {

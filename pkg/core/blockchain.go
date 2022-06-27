@@ -41,7 +41,7 @@ const (
 	headerBatchCount = 2000
 	version          = "0.2.5"
 
-	defaultInitialSAIYA                    = 52000000 //wei
+	defaultInitialSAI                      = 52000000 //wei
 	defaultGCPeriod                        = 10000
 	defaultMemPoolSize                     = 50000
 	defaultP2PNotaryRequestPayloadPoolSize = 1000
@@ -181,9 +181,9 @@ func NewBlockchain(s storage.Store, cfg config.ProtocolConfiguration, log *zap.L
 		return nil, errors.New("empty logger")
 	}
 
-	if cfg.InitialGASSupply <= 0 {
-		cfg.InitialGASSupply = defaultInitialSAIYA
-		log.Info("initial gas supply is not set or wrong, setting default value", zap.Uint64("InitialSAIYASupply", cfg.InitialGASSupply))
+	if cfg.InitialSAISupply <= 0 {
+		cfg.InitialSAISupply = defaultInitialSAI
+		log.Info("initial gas supply is not set or wrong, setting default value", zap.Uint64("InitialSAIYASupply", cfg.InitialSAISupply))
 	}
 	if cfg.MemPoolSize <= 0 {
 		cfg.MemPoolSize = defaultMemPoolSize
@@ -912,7 +912,7 @@ func (bc *Blockchain) IsExtensibleAllowed(u common.Address) bool {
 
 // GetUtilityTokenBalance returns utility token (SAIYA) balance for the acc.
 func (bc *Blockchain) GetUtilityTokenBalance(acc common.Address) *big.Int {
-	bs := bc.contracts.GAS.GetBalance(bc.dao, acc)
+	bs := bc.contracts.SAI.GetBalance(bc.dao, acc)
 	if bs == nil {
 		return big.NewInt(0)
 	}
@@ -1513,7 +1513,7 @@ func (bc *Blockchain) verifyHeaderWitnesses(currHeader, prevHeader *block.Header
 
 // UtilityTokenHash returns the utility token (SAIYA) native contract hash.
 func (bc *Blockchain) UtilityTokenAddress() common.Address {
-	return bc.contracts.GAS.Address
+	return bc.contracts.SAI.Address
 }
 
 // ManagementContractHash returns management contract's hash.

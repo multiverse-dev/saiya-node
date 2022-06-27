@@ -146,7 +146,7 @@ func (c *Client) Init() error {
 	if version.Protocol.MillisecondsPerBlock == 0 {
 		c.cache.chainId = version.ChainID
 	}
-	c.cache.nativeHashes[nativenames.GAS] = native.GASAddress
+	c.cache.nativeHashes[nativenames.SAI] = native.SAIAddress
 	c.cache.nativeHashes[nativenames.Policy] = native.PolicyAddress
 	c.cache.initDone = true
 	return nil

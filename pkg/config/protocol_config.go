@@ -16,7 +16,7 @@ type (
 		MemPoolSize int    `yaml:"MemPoolSize"`
 
 		// InitialSAIYASupply is the amount of SAIYA generated in the genesis block.
-		InitialGASSupply uint64 `yaml:"InitialSAIYASupply"`
+		InitialSAISupply uint64 `yaml:"InitialSAIYASupply"`
 		// KeepOnlyLatestState specifies if MPT should only store latest state.
 		// If true, DB size will be smaller, but older roots won't be accessible.
 		// This value should remain the same for the same database.

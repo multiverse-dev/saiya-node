@@ -1,63 +1,65 @@
 package core
 
 import (
+	"math/big"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/opcode"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/native"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 )
 
 // createGenesisBlock creates a genesis block based on the given configuration.
 func createGenesisBlock(cfg config.ProtocolConfiguration) (*block.Block, error) {
-	validators, err := validatorsFromConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	nextConsensus, err := getNextConsensusAddress(validators)
-	if err != nil {
-		return nil, err
-	}
-
 	base := block.Header{
-		Version:       0,
-		PrevHash:      util.Uint256{},
-		Timestamp:     uint64(time.Date(2016, 7, 15, 15, 8, 21, 0, time.UTC).Unix()) * 1000, // Milliseconds.
-		Nonce:         2083236893,
-		Index:         0,
-		NextConsensus: nextConsensus,
-		Script: transaction.Witness{
+		Version:   0,
+		PrevHash:  common.Hash{},
+		Timestamp: uint64(time.Date(2016, 7, 15, 15, 8, 21, 0, time.UTC).Unix()) * 1000, // Milliseconds.
+		Nonce:     2083236893,
+		Index:     0,
+		Witness: transaction.Witness{
+			VerificationScript: []byte{},
 			InvocationScript:   []byte{},
-			VerificationScript: []byte{byte(opcode.PUSH1)},
 		},
-		StateRootEnabled: cfg.StateRootInHeader,
 	}
-
+	initData := []byte{0x00}
 	b := &block.Block{
-		Header:       base,
-		Transactions: []*transaction.Transaction{},
+		Header: base,
+		Transactions: []*transaction.Transaction{
+			transaction.NewTx(&types.LegacyTx{
+				To:    &native.DesignationAddress,
+				Data:  initData,
+				Value: big.NewInt(0),
+			}),
+			transaction.NewTx(&types.LegacyTx{
+				To:    &native.PolicyAddress,
+				Data:  initData,
+				Value: big.NewInt(0),
+			}),
+			transaction.NewTx(&types.LegacyTx{
+				To:    &native.GASAddress,
+				Data:  initData,
+				Value: big.NewInt(0),
+			}),
+			transaction.NewTx(&types.LegacyTx{
+				To:    &native.ManagementAddress,
+				Data:  initData,
+				Value: big.NewInt(0),
+			}),
+		},
 	}
 	b.RebuildMerkleRoot()
 
 	return b, nil
 }
 
-func validatorsFromConfig(cfg config.ProtocolConfiguration) ([]*keys.PublicKey, error) {
-	vs, err := keys.NewPublicKeysFromStrings(cfg.StandbyCommittee)
-	if err != nil {
-		return nil, err
-	}
-	return vs[:cfg.GetNumOfCNs(0)], nil
-}
-
-func getNextConsensusAddress(validators []*keys.PublicKey) (val util.Uint160, err error) {
-	raw, err := smartcontract.CreateDefaultMultiSigRedeemScript(validators)
+func getConsensusAddress(validators []*keys.PublicKey) (val common.Address, err error) {
+	raw, err := keys.PublicKeys(validators).CreateDefaultMultiSigRedeemScript()
 	if err != nil {
 		return val, err
 	}

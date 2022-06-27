@@ -3,26 +3,26 @@ package chaindump
 import (
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// DumperRestorer is an interface to get/add blocks from/to.
+// DumperRestorer in the interface to get/add blocks from/to.
 type DumperRestorer interface {
 	AddBlock(block *block.Block) error
-	GetBlock(hash util.Uint256) (*block.Block, error)
+	GetBlock(hash common.Hash, full bool) (*block.Block, error)
 	GetConfig() config.ProtocolConfiguration
-	GetHeaderHash(int) util.Uint256
+	GetHeaderHash(int) common.Hash
 }
 
 // Dump writes count blocks from start to the provided writer.
-// Note: header needs to be written separately by a client.
+// Note: header needs to be written separately by client.
 func Dump(bc DumperRestorer, w *io.BinWriter, start, count uint32) error {
 	for i := start; i < start+count; i++ {
 		bh := bc.GetHeaderHash(int(i))
-		b, err := bc.GetBlock(bh)
+		b, err := bc.GetBlock(bh, true)
 		if err != nil {
 			return err
 		}
@@ -38,7 +38,7 @@ func Dump(bc DumperRestorer, w *io.BinWriter, start, count uint32) error {
 	return nil
 }
 
-// Restore restores blocks from the provided reader.
+// Restore restores blocks from provided reader.
 // f is called after addition of every block.
 func Restore(bc DumperRestorer, r *io.BinReader, skip, count uint32, f func(b *block.Block) error) error {
 	readBlock := func(r *io.BinReader) ([]byte, error) {
@@ -56,14 +56,12 @@ func Restore(bc DumperRestorer, r *io.BinReader, skip, count uint32, f func(b *b
 		}
 	}
 
-	stateRootInHeader := bc.GetConfig().StateRootInHeader
-
 	for ; i < skip+count; i++ {
 		buf, err := readBlock(r)
 		if err != nil {
 			return err
 		}
-		b := block.New(stateRootInHeader)
+		b := block.New()
 		r := io.NewBinReaderFromBuf(buf)
 		b.DecodeBinary(r)
 		if r.Err != nil {

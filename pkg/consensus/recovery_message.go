@@ -3,21 +3,20 @@ package consensus
 import (
 	"errors"
 
-	"github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	npayload "github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
+	"github.com/multiverse-dev/saiya/pkg/dbft/payload"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	npayload "github.com/multiverse-dev/saiya/pkg/network/payload"
 )
 
 type (
 	// recoveryMessage represents dBFT Recovery message.
 	recoveryMessage struct {
-		preparationHash     *util.Uint256
+		preparationHash     *common.Hash
 		preparationPayloads []*preparationCompact
 		commitPayloads      []*commitCompact
 		changeViewPayloads  []*changeViewCompact
-		stateRootEnabled    bool
 		prepareRequest      *message
 	}
 
@@ -43,13 +42,13 @@ type (
 
 var _ payload.RecoveryMessage = (*recoveryMessage)(nil)
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (m *recoveryMessage) DecodeBinary(r *io.BinReader) {
 	r.ReadArray(&m.changeViewPayloads)
 
 	var hasReq = r.ReadBool()
 	if hasReq {
-		m.prepareRequest = &message{stateRootEnabled: m.stateRootEnabled}
+		m.prepareRequest = &message{}
 		m.prepareRequest.DecodeBinary(r)
 		if r.Err == nil && m.prepareRequest.Type != prepareRequestType {
 			r.Err = errors.New("recovery message PrepareRequest has wrong type")
@@ -58,8 +57,8 @@ func (m *recoveryMessage) DecodeBinary(r *io.BinReader) {
 	} else {
 		l := r.ReadVarUint()
 		if l != 0 {
-			if l == util.Uint256Size {
-				m.preparationHash = new(util.Uint256)
+			if l == common.HashLength {
+				m.preparationHash = new(common.Hash)
 				r.ReadBytes(m.preparationHash[:])
 			} else {
 				r.Err = errors.New("invalid data")
@@ -73,7 +72,7 @@ func (m *recoveryMessage) DecodeBinary(r *io.BinReader) {
 	r.ReadArray(&m.commitPayloads)
 }
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (m *recoveryMessage) EncodeBinary(w *io.BinWriter) {
 	w.WriteArray(m.changeViewPayloads)
 
@@ -85,7 +84,7 @@ func (m *recoveryMessage) EncodeBinary(w *io.BinWriter) {
 		if m.preparationHash == nil {
 			w.WriteVarUint(0)
 		} else {
-			w.WriteVarUint(util.Uint256Size)
+			w.WriteVarUint(common.HashLength)
 			w.WriteBytes(m.preparationHash[:])
 		}
 	}
@@ -94,7 +93,7 @@ func (m *recoveryMessage) EncodeBinary(w *io.BinWriter) {
 	w.WriteArray(m.commitPayloads)
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (p *changeViewCompact) DecodeBinary(r *io.BinReader) {
 	p.ValidatorIndex = r.ReadB()
 	p.OriginalViewNumber = r.ReadB()
@@ -102,7 +101,7 @@ func (p *changeViewCompact) DecodeBinary(r *io.BinReader) {
 	p.InvocationScript = r.ReadVarBytes(1024)
 }
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (p *changeViewCompact) EncodeBinary(w *io.BinWriter) {
 	w.WriteB(p.ValidatorIndex)
 	w.WriteB(p.OriginalViewNumber)
@@ -110,7 +109,7 @@ func (p *changeViewCompact) EncodeBinary(w *io.BinWriter) {
 	w.WriteVarBytes(p.InvocationScript)
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (p *commitCompact) DecodeBinary(r *io.BinReader) {
 	p.ViewNumber = r.ReadB()
 	p.ValidatorIndex = r.ReadB()
@@ -118,7 +117,7 @@ func (p *commitCompact) DecodeBinary(r *io.BinReader) {
 	p.InvocationScript = r.ReadVarBytes(1024)
 }
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (p *commitCompact) EncodeBinary(w *io.BinWriter) {
 	w.WriteB(p.ViewNumber)
 	w.WriteB(p.ValidatorIndex)
@@ -126,29 +125,28 @@ func (p *commitCompact) EncodeBinary(w *io.BinWriter) {
 	w.WriteVarBytes(p.InvocationScript)
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (p *preparationCompact) DecodeBinary(r *io.BinReader) {
 	p.ValidatorIndex = r.ReadB()
 	p.InvocationScript = r.ReadVarBytes(1024)
 }
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (p *preparationCompact) EncodeBinary(w *io.BinWriter) {
 	w.WriteB(p.ValidatorIndex)
 	w.WriteVarBytes(p.InvocationScript)
 }
 
-// AddPayload implements the payload.RecoveryMessage interface.
+// AddPayload implements payload.RecoveryMessage interface.
 func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
 	validator := uint8(p.ValidatorIndex())
 
 	switch p.Type() {
 	case payload.PrepareRequestType:
 		m.prepareRequest = &message{
-			Type:             prepareRequestType,
-			ViewNumber:       p.ViewNumber(),
-			payload:          p.GetPrepareRequest().(*prepareRequest),
-			stateRootEnabled: m.stateRootEnabled,
+			Type:       prepareRequestType,
+			ViewNumber: p.ViewNumber(),
+			payload:    p.GetPrepareRequest().(*prepareRequest),
 		}
 		h := p.Hash()
 		m.preparationHash = &h
@@ -183,8 +181,8 @@ func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
 	}
 }
 
-// GetPrepareRequest implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareRequest(p payload.ConsensusPayload, validators []crypto.PublicKey, primary uint16) payload.ConsensusPayload {
+// GetPrepareRequest implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) GetPrepareRequest(p payload.ConsensusPayload, validators []*keys.PublicKey, primary uint16) payload.ConsensusPayload {
 	if m.prepareRequest == nil {
 		return nil
 	}
@@ -203,15 +201,15 @@ func (m *recoveryMessage) GetPrepareRequest(p payload.ConsensusPayload, validato
 
 	req := fromPayload(prepareRequestType, p.(*Payload), m.prepareRequest.payload)
 	req.SetValidatorIndex(primary)
-	req.Sender = validators[primary].(*publicKey).GetScriptHash()
+	req.Sender = validators[primary].Address()
 	req.Witness.InvocationScript = compact.InvocationScript
 	req.Witness.VerificationScript = getVerificationScript(uint8(primary), validators)
 
 	return req
 }
 
-// GetPrepareResponses implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
+// GetPrepareResponses implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, validators []*keys.PublicKey) []payload.ConsensusPayload {
 	if m.preparationHash == nil {
 		return nil
 	}
@@ -223,7 +221,7 @@ func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, valida
 			preparationHash: *m.preparationHash,
 		})
 		r.SetValidatorIndex(uint16(resp.ValidatorIndex))
-		r.Sender = validators[resp.ValidatorIndex].(*publicKey).GetScriptHash()
+		r.Sender = validators[resp.ValidatorIndex].Address()
 		r.Witness.InvocationScript = resp.InvocationScript
 		r.Witness.VerificationScript = getVerificationScript(resp.ValidatorIndex, validators)
 
@@ -233,8 +231,8 @@ func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, valida
 	return ps
 }
 
-// GetChangeViews implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
+// GetChangeViews implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators []*keys.PublicKey) []payload.ConsensusPayload {
 	ps := make([]payload.ConsensusPayload, len(m.changeViewPayloads))
 
 	for i, cv := range m.changeViewPayloads {
@@ -244,7 +242,7 @@ func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators 
 		})
 		c.message.ViewNumber = cv.OriginalViewNumber
 		c.SetValidatorIndex(uint16(cv.ValidatorIndex))
-		c.Sender = validators[cv.ValidatorIndex].(*publicKey).GetScriptHash()
+		c.Sender = validators[cv.ValidatorIndex].Address()
 		c.Witness.InvocationScript = cv.InvocationScript
 		c.Witness.VerificationScript = getVerificationScript(cv.ValidatorIndex, validators)
 
@@ -254,14 +252,14 @@ func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators 
 	return ps
 }
 
-// GetCommits implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetCommits(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
+// GetCommits implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) GetCommits(p payload.ConsensusPayload, validators []*keys.PublicKey) []payload.ConsensusPayload {
 	ps := make([]payload.ConsensusPayload, len(m.commitPayloads))
 
 	for i, c := range m.commitPayloads {
 		cc := fromPayload(commitType, p.(*Payload), &commit{signature: c.Signature})
 		cc.SetValidatorIndex(uint16(c.ValidatorIndex))
-		cc.Sender = validators[c.ValidatorIndex].(*publicKey).GetScriptHash()
+		cc.Sender = validators[c.ValidatorIndex].Address()
 		cc.Witness.InvocationScript = c.InvocationScript
 		cc.Witness.VerificationScript = getVerificationScript(c.ValidatorIndex, validators)
 
@@ -271,27 +269,22 @@ func (m *recoveryMessage) GetCommits(p payload.ConsensusPayload, validators []cr
 	return ps
 }
 
-// PreparationHash implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) PreparationHash() *util.Uint256 {
+// PreparationHash implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) PreparationHash() *common.Hash {
 	return m.preparationHash
 }
 
-// SetPreparationHash implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) SetPreparationHash(h *util.Uint256) {
+// SetPreparationHash implements payload.RecoveryMessage interface.
+func (m *recoveryMessage) SetPreparationHash(h *common.Hash) {
 	m.preparationHash = h
 }
 
-func getVerificationScript(i uint8, validators []crypto.PublicKey) []byte {
+func getVerificationScript(i uint8, validators []*keys.PublicKey) []byte {
 	if int(i) >= len(validators) {
 		return nil
 	}
-
-	pub, ok := validators[i].(*publicKey)
-	if !ok {
-		return nil
-	}
-
-	return pub.GetVerificationScript()
+	pub := validators[i]
+	return pub.CreateVerificationScript()
 }
 
 func fromPayload(t messageType, recovery *Payload, p io.Serializable) *Payload {
@@ -301,12 +294,11 @@ func fromPayload(t messageType, recovery *Payload, p io.Serializable) *Payload {
 			ValidBlockEnd: recovery.BlockIndex,
 		},
 		message: message{
-			Type:             t,
-			BlockIndex:       recovery.BlockIndex,
-			ViewNumber:       recovery.message.ViewNumber,
-			payload:          p,
-			stateRootEnabled: recovery.stateRootEnabled,
+			Type:       t,
+			BlockIndex: recovery.BlockIndex,
+			ViewNumber: recovery.message.ViewNumber,
+			payload:    p,
 		},
-		network: recovery.network,
+		chainId: recovery.chainId,
 	}
 }

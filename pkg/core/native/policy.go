@@ -1,367 +1,204 @@
 package native
 
 import (
-	"fmt"
+	"encoding/binary"
+	"errors"
 	"math/big"
-	"sort"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/dao"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop"
-	"github.com/nspcc-dev/neo-go/pkg/core/native/nativenames"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/callflag"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/manifest"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/dao"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativeids"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
 )
 
 const (
-	policyContractID = -7
+	DefaultFeePerByte uint64 = 1000
+	DefaultGasPrice   int64  = 10000000000 //10GWei
 
-	defaultExecFeeFactor      = interop.DefaultBaseExecFee
-	defaultFeePerByte         = 1000
-	defaultMaxVerificationGas = 1_50000000
-	// DefaultStoragePrice is the price to pay for 1 byte of storage.
-	DefaultStoragePrice = 100000
-
-	// maxExecFeeFactor is the maximum allowed execution fee factor.
-	maxExecFeeFactor = 100
-	// maxFeePerByte is the maximum allowed fee per byte value.
-	maxFeePerByte = 100_000_000
-	// maxStoragePrice is the maximum allowed price for a byte of storage.
-	maxStoragePrice = 10000000
-
-	// blockedAccountPrefix is a prefix used to store blocked account.
-	blockedAccountPrefix = 15
+	PrefixFeePerByte    byte = 0x01
+	PrefixGasPrice      byte = 0x08
+	PrefixBlockedAcount byte = 0x11
 )
 
 var (
-	// execFeeFactorKey is a key used to store execution fee factor.
-	execFeeFactorKey = []byte{18}
-	// feePerByteKey is a key used to store the minimum fee per byte for
-	// transaction.
-	feePerByteKey = []byte{10}
-	// storagePriceKey is a key used to store storage price.
-	storagePriceKey = []byte{19}
+	PolicyAddress      = common.Address(common.BytesToAddress([]byte{nativeids.Policy}))
+	ErrAccountBlocked  = errors.New("account blocked")
+	ErrContractBlocked = errors.New("contract blocked")
 )
 
-// Policy represents Policy native contract.
 type Policy struct {
-	interop.ContractMD
-	NEO *NEO
+	state.NativeContract
 }
 
-type PolicyCache struct {
-	execFeeFactor      uint32
-	feePerByte         int64
-	maxVerificationGas int64
-	storagePrice       uint32
-	blockedAccounts    []util.Uint160
-}
-
-var (
-	_ interop.Contract        = (*Policy)(nil)
-	_ dao.NativeContractCache = (*PolicyCache)(nil)
-)
-
-// Copy implements NativeContractCache interface.
-func (c *PolicyCache) Copy() dao.NativeContractCache {
-	cp := &PolicyCache{}
-	copyPolicyCache(c, cp)
-	return cp
-}
-
-func copyPolicyCache(src, dst *PolicyCache) {
-	*dst = *src
-	dst.blockedAccounts = make([]util.Uint160, len(src.blockedAccounts))
-	copy(dst.blockedAccounts, src.blockedAccounts)
-}
-
-// newPolicy returns Policy native contract.
-func newPolicy() *Policy {
-	p := &Policy{ContractMD: *interop.NewContractMD(nativenames.Policy, policyContractID)}
-	defer p.UpdateHash()
-
-	desc := newDescriptor("getFeePerByte", smartcontract.IntegerType)
-	md := newMethodAndPrice(p.getFeePerByte, 1<<15, callflag.ReadStates)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("isBlocked", smartcontract.BoolType,
-		manifest.NewParameter("account", smartcontract.Hash160Type))
-	md = newMethodAndPrice(p.isBlocked, 1<<15, callflag.ReadStates)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("getExecFeeFactor", smartcontract.IntegerType)
-	md = newMethodAndPrice(p.getExecFeeFactor, 1<<15, callflag.ReadStates)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("setExecFeeFactor", smartcontract.VoidType,
-		manifest.NewParameter("value", smartcontract.IntegerType))
-	md = newMethodAndPrice(p.setExecFeeFactor, 1<<15, callflag.States)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("getStoragePrice", smartcontract.IntegerType)
-	md = newMethodAndPrice(p.getStoragePrice, 1<<15, callflag.ReadStates)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("setStoragePrice", smartcontract.VoidType,
-		manifest.NewParameter("value", smartcontract.IntegerType))
-	md = newMethodAndPrice(p.setStoragePrice, 1<<15, callflag.States)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("setFeePerByte", smartcontract.VoidType,
-		manifest.NewParameter("value", smartcontract.IntegerType))
-	md = newMethodAndPrice(p.setFeePerByte, 1<<15, callflag.States)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("blockAccount", smartcontract.BoolType,
-		manifest.NewParameter("account", smartcontract.Hash160Type))
-	md = newMethodAndPrice(p.blockAccount, 1<<15, callflag.States)
-	p.AddMethod(md, desc)
-
-	desc = newDescriptor("unblockAccount", smartcontract.BoolType,
-		manifest.NewParameter("account", smartcontract.Hash160Type))
-	md = newMethodAndPrice(p.unblockAccount, 1<<15, callflag.States)
-	p.AddMethod(md, desc)
-
-	return p
-}
-
-// Metadata implements the Contract interface.
-func (p *Policy) Metadata() *interop.ContractMD {
-	return &p.ContractMD
-}
-
-// Initialize initializes Policy native contract and implements the Contract interface.
-func (p *Policy) Initialize(ic *interop.Context) error {
-	setIntWithKey(p.ID, ic.DAO, feePerByteKey, defaultFeePerByte)
-	setIntWithKey(p.ID, ic.DAO, execFeeFactorKey, defaultExecFeeFactor)
-	setIntWithKey(p.ID, ic.DAO, storagePriceKey, DefaultStoragePrice)
-
-	cache := &PolicyCache{
-		execFeeFactor:      defaultExecFeeFactor,
-		feePerByte:         defaultFeePerByte,
-		maxVerificationGas: defaultMaxVerificationGas,
-		storagePrice:       DefaultStoragePrice,
-		blockedAccounts:    make([]util.Uint160, 0),
+func NewPolicy(cs *Contracts) *Policy {
+	return &Policy{
+		NativeContract: state.NativeContract{
+			Name: nativenames.Policy,
+			Contract: state.Contract{
+				Address: PolicyAddress,
+				Code:    []byte{},
+			},
+		},
 	}
-	ic.DAO.SetCache(p.ID, cache)
+}
 
+func createBlockKey(address common.Address) []byte {
+	return makeAddressKey(PrefixBlockedAcount, address)
+}
+
+func (p *Policy) initialize(ic InteropContext) error {
+	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
+		return ErrInitialize
+	}
+	p.setFeePerByte(ic, DefaultFeePerByte)
 	return nil
 }
 
-func (p *Policy) InitializeCache(d *dao.Simple) error {
-	cache := &PolicyCache{}
-	err := p.fillCacheFromDAO(cache, d)
+func (p *Policy) setFeePerByte(ic InteropContext, fee uint64) error {
+	err := checkCommittee(ic)
 	if err != nil {
 		return err
 	}
-	d.SetCache(p.ID, cache)
+	item := make([]byte, 8)
+	binary.BigEndian.PutUint64(item, fee)
+	ic.Dao().PutStorageItem(p.Address, []byte{PrefixFeePerByte}, item)
 	return nil
 }
 
-func (p *Policy) fillCacheFromDAO(cache *PolicyCache, d *dao.Simple) error {
-	cache.execFeeFactor = uint32(getIntWithKey(p.ID, d, execFeeFactorKey))
-	cache.feePerByte = getIntWithKey(p.ID, d, feePerByteKey)
-	cache.maxVerificationGas = defaultMaxVerificationGas
-	cache.storagePrice = uint32(getIntWithKey(p.ID, d, storagePriceKey))
-
-	cache.blockedAccounts = make([]util.Uint160, 0)
-	var fErr error
-	d.Seek(p.ID, storage.SeekRange{Prefix: []byte{blockedAccountPrefix}}, func(k, _ []byte) bool {
-		hash, err := util.Uint160DecodeBytesBE(k)
-		if err != nil {
-			fErr = fmt.Errorf("failed to decode blocked account hash: %w", err)
-			return false
-		}
-		cache.blockedAccounts = append(cache.blockedAccounts, hash)
-		return true
-	})
-	if fErr != nil {
-		return fmt.Errorf("failed to initialize blocked accounts: %w", fErr)
+func (p *Policy) GetFeePerByteInternal(s *dao.Simple) uint64 {
+	item := s.GetStorageItem(p.Address, []byte{PrefixFeePerByte})
+	if item == nil {
+		return DefaultFeePerByte
 	}
+	return binary.BigEndian.Uint64(item)
+}
+
+func (p *Policy) setGasPrice(ic InteropContext, gasPrice *big.Int) error {
+	err := checkCommittee(ic)
+	if err != nil {
+		return err
+	}
+	ic.Dao().PutStorageItem(p.Address, []byte{PrefixGasPrice}, gasPrice.Bytes())
 	return nil
 }
 
-// OnPersist implements Contract interface.
-func (p *Policy) OnPersist(ic *interop.Context) error {
-	return nil
-}
-
-// PostPersist implements Contract interface.
-func (p *Policy) PostPersist(ic *interop.Context) error {
-	return nil
-}
-
-// getFeePerByte is a Policy contract method that returns the required transaction's fee
-// per byte.
-func (p *Policy) getFeePerByte(ic *interop.Context, _ []stackitem.Item) stackitem.Item {
-	return stackitem.NewBigInteger(big.NewInt(p.GetFeePerByteInternal(ic.DAO)))
-}
-
-// GetFeePerByteInternal returns required transaction's fee per byte.
-func (p *Policy) GetFeePerByteInternal(dao *dao.Simple) int64 {
-	cache := dao.GetROCache(p.ID).(*PolicyCache)
-	return cache.feePerByte
-}
-
-// GetMaxVerificationGas returns the maximum gas allowed to be burned during verification.
-func (p *Policy) GetMaxVerificationGas(dao *dao.Simple) int64 {
-	cache := dao.GetROCache(p.ID).(*PolicyCache)
-	return cache.maxVerificationGas
-}
-
-func (p *Policy) getExecFeeFactor(ic *interop.Context, _ []stackitem.Item) stackitem.Item {
-	return stackitem.NewBigInteger(big.NewInt(int64(p.GetExecFeeFactorInternal(ic.DAO))))
-}
-
-// GetExecFeeFactorInternal returns current execution fee factor.
-func (p *Policy) GetExecFeeFactorInternal(d *dao.Simple) int64 {
-	cache := d.GetROCache(p.ID).(*PolicyCache)
-	return int64(cache.execFeeFactor)
-}
-
-func (p *Policy) setExecFeeFactor(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	value := toUint32(args[0])
-	if value <= 0 || maxExecFeeFactor < value {
-		panic(fmt.Errorf("ExecFeeFactor must be between 0 and %d", maxExecFeeFactor))
+func (p *Policy) GetGasPriceInternal(s *dao.Simple) *big.Int {
+	item := s.GetStorageItem(p.Address, []byte{PrefixGasPrice})
+	if item == nil {
+		return big.NewInt(DefaultGasPrice)
 	}
-	if !p.NEO.checkCommittee(ic) {
-		panic("invalid committee signature")
-	}
-	setIntWithKey(p.ID, ic.DAO, execFeeFactorKey, int64(value))
-	cache := ic.DAO.GetRWCache(p.ID).(*PolicyCache)
-	cache.execFeeFactor = value
-	return stackitem.Null{}
+	return big.NewInt(0).SetBytes(item)
 }
 
-// isBlocked is Policy contract method that checks whether provided account is blocked.
-func (p *Policy) isBlocked(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	hash := toUint160(args[0])
-	_, blocked := p.isBlockedInternal(ic.DAO, hash)
-	return stackitem.NewBool(blocked)
-}
-
-// IsBlocked checks whether provided account is blocked.
-func (p *Policy) IsBlocked(dao *dao.Simple, hash util.Uint160) bool {
-	_, isBlocked := p.isBlockedInternal(dao, hash)
-	return isBlocked
-}
-
-// isBlockedInternal checks whether provided account is blocked. It returns position
-// of the blocked account in the blocked accounts list (or the position it should be
-// put at).
-func (p *Policy) isBlockedInternal(dao *dao.Simple, hash util.Uint160) (int, bool) {
-	cache := dao.GetROCache(p.ID).(*PolicyCache)
-	length := len(cache.blockedAccounts)
-	i := sort.Search(length, func(i int) bool {
-		return !cache.blockedAccounts[i].Less(hash)
-	})
-	if length != 0 && i != length && cache.blockedAccounts[i].Equals(hash) {
-		return i, true
+func (p *Policy) checkSystem(ic InteropContext, address common.Address) error {
+	if ic.PersistingBlock() == nil {
+		return ErrNoBlock
 	}
-	return i, false
-}
-
-func (p *Policy) getStoragePrice(ic *interop.Context, _ []stackitem.Item) stackitem.Item {
-	return stackitem.NewBigInteger(big.NewInt(p.GetStoragePriceInternal(ic.DAO)))
-}
-
-// GetStoragePriceInternal returns current execution fee factor.
-func (p *Policy) GetStoragePriceInternal(d *dao.Simple) int64 {
-	cache := d.GetROCache(p.ID).(*PolicyCache)
-	return int64(cache.storagePrice)
-}
-
-func (p *Policy) setStoragePrice(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	value := toUint32(args[0])
-	if value <= 0 || maxStoragePrice < value {
-		panic(fmt.Errorf("StoragePrice must be between 0 and %d", maxStoragePrice))
+	addrs, err := ic.Natives().Designate.GetSysAddresses(ic.Dao(), ic.PersistingBlock().Index)
+	if err != nil {
+		return err
 	}
-	if !p.NEO.checkCommittee(ic) {
-		panic("invalid committee signature")
-	}
-	setIntWithKey(p.ID, ic.DAO, storagePriceKey, int64(value))
-	cache := ic.DAO.GetRWCache(p.ID).(*PolicyCache)
-	cache.storagePrice = value
-	return stackitem.Null{}
-}
-
-// setFeePerByte is a Policy contract method that sets transaction's fee per byte.
-func (p *Policy) setFeePerByte(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	value := toBigInt(args[0]).Int64()
-	if value < 0 || value > maxFeePerByte {
-		panic(fmt.Errorf("FeePerByte shouldn't be negative or greater than %d", maxFeePerByte))
-	}
-	if !p.NEO.checkCommittee(ic) {
-		panic("invalid committee signature")
-	}
-	setIntWithKey(p.ID, ic.DAO, feePerByteKey, value)
-	cache := ic.DAO.GetRWCache(p.ID).(*PolicyCache)
-	cache.feePerByte = value
-	return stackitem.Null{}
-}
-
-// blockAccount is a Policy contract method that adds the given account hash to the list
-// of blocked accounts.
-func (p *Policy) blockAccount(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	if !p.NEO.checkCommittee(ic) {
-		panic("invalid committee signature")
-	}
-	hash := toUint160(args[0])
-	for i := range ic.Natives {
-		if ic.Natives[i].Metadata().Hash == hash {
-			panic("cannot block native contract")
-		}
-	}
-	return stackitem.NewBool(p.blockAccountInternal(ic.DAO, hash))
-}
-func (p *Policy) blockAccountInternal(d *dao.Simple, hash util.Uint160) bool {
-	i, blocked := p.isBlockedInternal(d, hash)
-	if blocked {
-		return false
-	}
-	key := append([]byte{blockedAccountPrefix}, hash.BytesBE()...)
-	d.PutStorageItem(p.ID, key, state.StorageItem{})
-	cache := d.GetRWCache(p.ID).(*PolicyCache)
-	if len(cache.blockedAccounts) == i {
-		cache.blockedAccounts = append(cache.blockedAccounts, hash)
-	} else {
-		cache.blockedAccounts = append(cache.blockedAccounts[:i+1], cache.blockedAccounts[i:]...)
-		cache.blockedAccounts[i] = hash
-	}
-	return true
-}
-
-// unblockAccount is a Policy contract method that removes the given account hash from
-// the list of blocked accounts.
-func (p *Policy) unblockAccount(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	if !p.NEO.checkCommittee(ic) {
-		panic("invalid committee signature")
-	}
-	hash := toUint160(args[0])
-	i, blocked := p.isBlockedInternal(ic.DAO, hash)
-	if !blocked {
-		return stackitem.NewBool(false)
-	}
-	key := append([]byte{blockedAccountPrefix}, hash.BytesBE()...)
-	ic.DAO.DeleteStorageItem(p.ID, key)
-	cache := ic.DAO.GetRWCache(p.ID).(*PolicyCache)
-	cache.blockedAccounts = append(cache.blockedAccounts[:i], cache.blockedAccounts[i+1:]...)
-	return stackitem.NewBool(true)
-}
-
-// CheckPolicy checks whether a transaction conforms to the current policy restrictions,
-// like not being signed by a blocked account or not exceeding the block-level system
-// fee limit.
-func (p *Policy) CheckPolicy(d *dao.Simple, tx *transaction.Transaction) error {
-	for _, signer := range tx.Signers {
-		if _, isBlocked := p.isBlockedInternal(d, signer.Account); isBlocked {
-			return fmt.Errorf("account %s is blocked", signer.Account.StringLE())
+	for _, account := range addrs {
+		if address == account {
+			return errors.New("system account")
 		}
 	}
 	return nil
+}
+
+func (p *Policy) checkAdmin(ic InteropContext, address common.Address) error {
+	if ic.PersistingBlock() == nil {
+		return ErrNoBlock
+	}
+	addrs, err := ic.Natives().Designate.GetAdminAddresses(ic.Dao(), ic.PersistingBlock().Index)
+	if err != nil {
+		return err
+	}
+	for _, account := range addrs {
+		if address == account {
+			return errors.New("admin account")
+		}
+	}
+	return nil
+}
+
+func (p *Policy) blockAddress(ic InteropContext, address common.Address) error {
+	err := checkCommittee(ic)
+	if err != nil {
+		return err
+	}
+	if err := p.checkSystem(ic, address); err != nil {
+		return err
+	}
+	key := createBlockKey(address)
+	item := ic.Dao().GetStorageItem(p.Address, key)
+	if item != nil {
+		return errors.New("already blocked")
+	}
+	ic.Dao().PutStorageItem(p.Address, key, []byte{1})
+	return nil
+}
+
+func (p *Policy) IsBlocked(d *dao.Simple, address common.Address) bool {
+	key := createBlockKey(address)
+	item := d.GetStorageItem(p.Address, key)
+	return item != nil
+}
+
+func (p *Policy) unblockAddress(ic InteropContext, address common.Address) error {
+	err := checkCommittee(ic)
+	if err != nil {
+		return err
+	}
+	if err := p.checkSystem(ic, address); err != nil {
+		return err
+	}
+	key := createBlockKey(address)
+	item := ic.Dao().GetStorageItem(p.Address, key)
+	if item != nil {
+		return errors.New("account isn't blocked")
+	}
+	ic.Dao().DeleteStorageItem(p.Address, key)
+	return nil
+}
+
+func (p *Policy) RequiredGas(ic InteropContext, input []byte) uint64 {
+	if len(input) < 1 {
+		return 0
+	}
+	switch input[0] {
+	case 0x00:
+		return 0
+	case 0x01, 0x02, 0x03:
+		return defaultNativeWriteFee
+	default:
+		return 0
+	}
+}
+
+func (p *Policy) Run(ic InteropContext, input []byte) ([]byte, error) {
+	if len(input) < 1 {
+		return nil, ErrEmptyInput
+	}
+	switch input[0] {
+	case 0x00:
+		return []byte{}, p.initialize(ic)
+	case PrefixFeePerByte:
+		fee := binary.BigEndian.Uint64(input[1:])
+		p.setFeePerByte(ic, fee)
+		return []byte{}, nil
+	case PrefixGasPrice:
+		gasPrice := big.NewInt(0).SetBytes(input[1:])
+		p.setGasPrice(ic, gasPrice)
+		return []byte{}, nil
+	case PrefixBlockedAcount:
+		address := common.BytesToAddress(input[1:])
+		return []byte{}, p.blockAddress(ic, address)
+	case PrefixBlockedAcount + 1:
+		address := common.BytesToAddress(input[1:])
+		return []byte{}, p.unblockAddress(ic, address)
+	default:
+		return nil, ErrInvalidMethodID
+	}
 }

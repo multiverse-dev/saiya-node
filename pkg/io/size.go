@@ -19,8 +19,6 @@ func (cw *counterWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// getVarIntSize returns the size in number of bytes of a variable integer.
-// (reference: GetVarSize(int value),  https://github.com/neo-project/neo/blob/master/neo/IO/Helper.cs)
 func getVarIntSize(value int) int {
 	var size uintptr
 
@@ -34,10 +32,6 @@ func getVarIntSize(value int) int {
 	return int(size)
 }
 
-// GetVarSize returns the number of bytes in a serialized variable. It supports ints/uints (estimating
-// them with variable-length encoding that is used in NEO), strings, pointers to Serializable structures,
-// slices and arrays of ints/uints or Serializable structures. It's similar to GetVarSize<T>(this T[] value)
-// used in C#, but differs in that it also supports things like Uint160 or Uint256.
 func GetVarSize(value interface{}) int {
 	v := reflect.ValueOf(value)
 	switch v.Kind() {

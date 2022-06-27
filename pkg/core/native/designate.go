@@ -2,404 +2,261 @@ package native
 
 import (
 	"encoding/binary"
-	"errors"
-	"fmt"
-	"math"
-	"math/big"
 	"sort"
-	"sync/atomic"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/blockchainer/services"
-	"github.com/nspcc-dev/neo-go/pkg/core/dao"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop/runtime"
-	"github.com/nspcc-dev/neo-go/pkg/core/native/nativenames"
-	"github.com/nspcc-dev/neo-go/pkg/core/native/noderoles"
-	"github.com/nspcc-dev/neo-go/pkg/core/stateroot"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/callflag"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/manifest"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/dao"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativeids"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
+	"github.com/multiverse-dev/saiya/pkg/core/native/noderoles"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 )
-
-// Designate represents a designation contract.
-type Designate struct {
-	interop.ContractMD
-	NEO *NEO
-
-	// p2pSigExtensionsEnabled defines whether the P2P signature extensions logic is relevant.
-	p2pSigExtensionsEnabled bool
-
-	OracleService atomic.Value
-	// NotaryService represents a Notary node module.
-	NotaryService atomic.Value
-	// StateRootService represents a StateRoot node module.
-	StateRootService *stateroot.Module
-}
-
-type roleData struct {
-	nodes  keys.PublicKeys
-	addr   util.Uint160
-	height uint32
-}
-
-type DesignationCache struct {
-	// rolesChangedFlag shows whether any of designated nodes were changed within the current block.
-	// It is used to notify dependant services about updated node roles during PostPersist.
-	rolesChangedFlag bool
-	oracles          roleData
-	stateVals        roleData
-	neofsAlphabet    roleData
-	notaries         roleData
-}
 
 const (
-	designateContractID = -8
-
-	// maxNodeCount is the maximum number of nodes to set the role for.
-	maxNodeCount = 32
-
-	// DesignationEventName is the name of the designation event.
-	DesignationEventName = "Designation"
-)
-
-// Various errors.
-var (
-	ErrAlreadyDesignated = errors.New("already designated given role at current block")
-	ErrEmptyNodeList     = errors.New("node list is empty")
-	ErrInvalidIndex      = errors.New("invalid index")
-	ErrInvalidRole       = errors.New("invalid role")
-	ErrLargeNodeList     = errors.New("node list is too large")
-	ErrNoBlock           = errors.New("no persisting block in the context")
+	MaxNodeCount = 21
 )
 
 var (
-	_ interop.Contract        = (*Designate)(nil)
-	_ dao.NativeContractCache = (*DesignationCache)(nil)
+	DesignationAddress common.Address = common.Address(common.BytesToAddress([]byte{nativeids.Designation}))
 )
 
-// Copy implements NativeContractCache interface.
-func (c *DesignationCache) Copy() dao.NativeContractCache {
-	cp := &DesignationCache{}
-	copyDesignationCache(c, cp)
-	return cp
+type Designate struct {
+	state.NativeContract
+	StandbyCommittee keys.PublicKeys
+	StandyValidators keys.PublicKeys
 }
 
-func copyDesignationCache(src, dst *DesignationCache) {
-	*dst = *src
-}
-
-func (s *Designate) isValidRole(r noderoles.Role) bool {
-	return r == noderoles.Oracle || r == noderoles.StateValidator ||
-		r == noderoles.NeoFSAlphabet || (s.p2pSigExtensionsEnabled && r == noderoles.P2PNotary)
-}
-
-func newDesignate(p2pSigExtensionsEnabled bool) *Designate {
-	s := &Designate{ContractMD: *interop.NewContractMD(nativenames.Designation, designateContractID)}
-	s.p2pSigExtensionsEnabled = p2pSigExtensionsEnabled
-	defer s.UpdateHash()
-
-	desc := newDescriptor("getDesignatedByRole", smartcontract.ArrayType,
-		manifest.NewParameter("role", smartcontract.IntegerType),
-		manifest.NewParameter("index", smartcontract.IntegerType))
-	md := newMethodAndPrice(s.getDesignatedByRole, 1<<15, callflag.ReadStates)
-	s.AddMethod(md, desc)
-
-	desc = newDescriptor("designateAsRole", smartcontract.VoidType,
-		manifest.NewParameter("role", smartcontract.IntegerType),
-		manifest.NewParameter("nodes", smartcontract.ArrayType))
-	md = newMethodAndPrice(s.designateAsRole, 1<<15, callflag.States|callflag.AllowNotify)
-	s.AddMethod(md, desc)
-
-	s.AddEvent(DesignationEventName,
-		manifest.NewParameter("Role", smartcontract.IntegerType),
-		manifest.NewParameter("BlockIndex", smartcontract.IntegerType))
-
-	return s
-}
-
-// Initialize initializes Designation contract. It is called once at native Management's OnPersist
-// at the genesis block, and we can't properly fill the cache at this point, as there are no roles
-// data in the storage.
-func (s *Designate) Initialize(ic *interop.Context) error {
-	cache := &DesignationCache{}
-	ic.DAO.SetCache(s.ID, cache)
-	return nil
-}
-
-// InitializeCache fills native Designate cache from DAO. It is called at non-zero height, thus
-// we can fetch the roles data right from the storage.
-func (s *Designate) InitializeCache(d *dao.Simple) error {
-	cache := &DesignationCache{}
-	roles := []noderoles.Role{noderoles.Oracle, noderoles.NeoFSAlphabet, noderoles.StateValidator}
-	if s.p2pSigExtensionsEnabled {
-		roles = append(roles, noderoles.P2PNotary)
-	}
-	for _, r := range roles {
-		err := s.updateCachedRoleData(cache, d, r)
-		if err != nil {
-			return fmt.Errorf("failed to get nodes from storage for %d role: %w", r, err)
-		}
-	}
-	d.SetCache(s.ID, cache)
-	return nil
-}
-
-// OnPersist implements the Contract interface.
-func (s *Designate) OnPersist(ic *interop.Context) error {
-	return nil
-}
-
-// PostPersist implements the Contract interface.
-func (s *Designate) PostPersist(ic *interop.Context) error {
-	cache := ic.DAO.GetRWCache(s.ID).(*DesignationCache)
-	if !cache.rolesChangedFlag {
-		return nil
-	}
-
-	s.notifyRoleChanged(&cache.oracles, noderoles.Oracle)
-	s.notifyRoleChanged(&cache.stateVals, noderoles.StateValidator)
-	s.notifyRoleChanged(&cache.neofsAlphabet, noderoles.NeoFSAlphabet)
-	if s.p2pSigExtensionsEnabled {
-		s.notifyRoleChanged(&cache.notaries, noderoles.P2PNotary)
-	}
-
-	cache.rolesChangedFlag = false
-	return nil
-}
-
-// Metadata returns contract metadata.
-func (s *Designate) Metadata() *interop.ContractMD {
-	return &s.ContractMD
-}
-
-func (s *Designate) getDesignatedByRole(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	r, ok := s.getRole(args[0])
-	if !ok {
-		panic(ErrInvalidRole)
-	}
-	ind, err := args[1].TryInteger()
-	if err != nil || !ind.IsUint64() {
-		panic(ErrInvalidIndex)
-	}
-	index := ind.Uint64()
-	if index > uint64(ic.BlockHeight()+1) {
-		panic(ErrInvalidIndex)
-	}
-	pubs, _, err := s.GetDesignatedByRole(ic.DAO, r, uint32(index))
+func NewDesignate(cfg config.ProtocolConfiguration) *Designate {
+	standbyCommittee, err := keys.NewPublicKeysFromStrings(cfg.StandbyCommittee)
 	if err != nil {
-		panic(err)
+		panic("invalid standy committee config")
 	}
-	return pubsToArray(pubs)
-}
-
-func (s *Designate) hashFromNodes(r noderoles.Role, nodes keys.PublicKeys) util.Uint160 {
-	if len(nodes) == 0 {
-		return util.Uint160{}
-	}
-	var script []byte
-	switch r {
-	case noderoles.P2PNotary:
-		script, _ = smartcontract.CreateMultiSigRedeemScript(1, nodes.Copy())
-	default:
-		script, _ = smartcontract.CreateDefaultMultiSigRedeemScript(nodes.Copy())
-	}
-	return hash.Hash160(script)
-}
-
-// updateCachedRoleData fetches the most recent role data from the storage and
-// updates the given cache.
-func (s *Designate) updateCachedRoleData(cache *DesignationCache, d *dao.Simple, r noderoles.Role) error {
-	var v *roleData
-	switch r {
-	case noderoles.Oracle:
-		v = &cache.oracles
-	case noderoles.StateValidator:
-		v = &cache.stateVals
-	case noderoles.NeoFSAlphabet:
-		v = &cache.neofsAlphabet
-	case noderoles.P2PNotary:
-		v = &cache.notaries
-	}
-	nodeKeys, height, err := s.getDesignatedByRoleFromStorage(d, r, math.MaxUint32)
+	standbyCommittee = standbyCommittee.Unique()
+	sort.Sort(standbyCommittee)
+	standbyValidators, err := keys.NewPublicKeysFromStrings(cfg.StandbyValidators)
 	if err != nil {
-		return err
+		panic("invalid standy validators config")
 	}
-	v.nodes = nodeKeys
-	v.addr = s.hashFromNodes(r, nodeKeys)
-	v.height = height
-	cache.rolesChangedFlag = true
+	standbyValidators = standbyValidators.Unique()
+	sort.Sort(standbyValidators)
+	return &Designate{
+		NativeContract: state.NativeContract{
+			Name: nativenames.Designation,
+			Contract: state.Contract{
+				Address: DesignationAddress,
+			},
+		},
+		StandbyCommittee: standbyCommittee,
+		StandyValidators: standbyValidators,
+	}
+}
+
+func (d *Designate) initialize(ic InteropContext) error {
+	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
+		return ErrInitialize
+	}
+	ic.Dao().PutStorageItem(d.Address, createRoleKey(noderoles.Committee, 0), d.StandbyCommittee.Bytes())
+	ic.Dao().PutStorageItem(d.Address, createRoleKey(noderoles.Validator, 0), d.StandyValidators.Bytes())
 	return nil
 }
 
-func (s *Designate) notifyRoleChanged(v *roleData, r noderoles.Role) {
-	switch r {
-	case noderoles.Oracle:
-		if orc, _ := s.OracleService.Load().(services.Oracle); orc != nil {
-			orc.UpdateOracleNodes(v.nodes.Copy())
-		}
-	case noderoles.P2PNotary:
-		if ntr, _ := s.NotaryService.Load().(services.Notary); ntr != nil {
-			ntr.UpdateNotaryNodes(v.nodes.Copy())
-		}
-	case noderoles.StateValidator:
-		if s.StateRootService != nil {
-			s.StateRootService.UpdateStateValidators(v.height, v.nodes.Copy())
-		}
-	}
+func createRoleKey(role noderoles.Role, index uint32) []byte {
+	key := make([]byte, 5)
+	key[0] = byte(role)
+	binary.BigEndian.PutUint32(key[1:], index)
+	return key
 }
 
-func getCachedRoleData(cache *DesignationCache, r noderoles.Role) *roleData {
-	switch r {
-	case noderoles.Oracle:
-		return &cache.oracles
-	case noderoles.StateValidator:
-		return &cache.stateVals
-	case noderoles.NeoFSAlphabet:
-		return &cache.neofsAlphabet
-	case noderoles.P2PNotary:
-		return &cache.notaries
+func (d *Designate) GetDesignatedByRole(s *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, error) {
+	if !noderoles.IsValid(r) {
+		return nil, ErrInvalidRole
 	}
-	return nil
-}
-
-// GetLastDesignatedHash returns the last designated hash of the given role.
-func (s *Designate) GetLastDesignatedHash(d *dao.Simple, r noderoles.Role) (util.Uint160, error) {
-	if !s.isValidRole(r) {
-		return util.Uint160{}, ErrInvalidRole
+	kvs, err := s.GetStorageItemsWithPrefix(d.Address, []byte{byte(r)})
+	if err != nil {
+		return nil, err
 	}
-	cache := d.GetROCache(s.ID).(*DesignationCache)
-	if val := getCachedRoleData(cache, r); val != nil {
-		return val.addr, nil
-	}
-	return util.Uint160{}, nil
-}
-
-// GetDesignatedByRole returns nodes for role r.
-func (s *Designate) GetDesignatedByRole(d *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, uint32, error) {
-	if !s.isValidRole(r) {
-		return nil, 0, ErrInvalidRole
-	}
-	cache := d.GetROCache(s.ID).(*DesignationCache)
-	if val := getCachedRoleData(cache, r); val != nil {
-		if val.height <= index {
-			return val.nodes.Copy(), val.height, nil
-		}
-	} else {
-		// Cache is always valid, thus if there's no cache then there's no designated nodes for this role.
-		return nil, 0, nil
-	}
-	// Cache stores only latest designated nodes, so if the old info is requested, then we still need
-	// to search in the storage.
-	return s.getDesignatedByRoleFromStorage(d, r, index)
-}
-
-// getDesignatedByRoleFromStorage returns nodes for role r from the storage.
-func (s *Designate) getDesignatedByRoleFromStorage(d *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, uint32, error) {
 	var (
-		ns        NodeList
-		bestIndex uint32
-		resVal    []byte
-		start     = make([]byte, 4)
+		ks    = keys.PublicKeys{}
+		resSi state.StorageItem
 	)
-
-	binary.BigEndian.PutUint32(start, index)
-	d.Seek(s.ID, storage.SeekRange{
-		Prefix:    []byte{byte(r)},
-		Start:     start,
-		Backwards: true,
-	}, func(k, v []byte) bool {
-		bestIndex = binary.BigEndian.Uint32(k) // If len(k) < 4 the DB is broken and it deserves a panic.
-		resVal = v
-		// Take just the latest item, it's the one we need.
-		return false
-	})
-	if resVal != nil {
-		err := stackitem.DeserializeConvertible(resVal, &ns)
-		if err != nil {
-			return nil, 0, err
+	for i := len(kvs) - 1; i >= 0; i-- {
+		kv := kvs[i]
+		if len(kv.Key) < 4 {
+			continue
+		}
+		siInd := binary.BigEndian.Uint32(kv.Key)
+		if siInd <= index {
+			resSi = kv.Item
+			break
 		}
 	}
-	return keys.PublicKeys(ns), bestIndex, nil
+	if resSi != nil {
+		err := ks.DecodeBytes(resSi)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ks, nil
 }
 
-func (s *Designate) designateAsRole(ic *interop.Context, args []stackitem.Item) stackitem.Item {
-	r, ok := s.getRole(args[0])
-	if !ok {
-		panic(ErrInvalidRole)
+func createCommitteeAddress(keys keys.PublicKeys) (common.Address, error) {
+	if keys.Len() == 0 {
+		return common.Address{}, ErrEmptyNodeList
 	}
-	var ns NodeList
-	if err := ns.FromStackItem(args[1]); err != nil {
-		panic(err)
+	if keys.Len() == 1 {
+		return keys[0].Address(), nil
 	}
-
-	err := s.DesignateAsRole(ic, r, keys.PublicKeys(ns))
+	script, err := keys.CreateMajorityMultiSigRedeemScript()
 	if err != nil {
-		panic(err)
+		return common.Address{}, err
 	}
-	return stackitem.Null{}
+	return hash.Hash160(script), nil
 }
 
-// DesignateAsRole sets nodes for role r.
-func (s *Designate) DesignateAsRole(ic *interop.Context, r noderoles.Role, pubs keys.PublicKeys) error {
-	length := len(pubs)
-	if length == 0 {
-		return ErrEmptyNodeList
+func (d *Designate) GetCommitteeMembers(s *dao.Simple, index uint32) (keys.PublicKeys, error) {
+	return d.GetDesignatedByRole(s, noderoles.Committee, index)
+}
+
+func (d *Designate) GetCommitteeAddress(s *dao.Simple, index uint32) (common.Address, error) {
+	committees, err := d.GetCommitteeMembers(s, index)
+	if err != nil {
+		return common.Address{}, err
 	}
-	if length > maxNodeCount {
-		return ErrLargeNodeList
+	return createCommitteeAddress(committees)
+}
+
+func (d *Designate) GetValidators(s *dao.Simple, index uint32) (keys.PublicKeys, error) {
+	return d.GetDesignatedByRole(s, noderoles.Validator, index)
+}
+
+func (d *Designate) GetValidatorAddress(s *dao.Simple, index uint32) (common.Address, error) {
+	validators, err := d.GetValidators(s, index)
+	if err != nil {
+		return common.Address{}, err
 	}
-	if !s.isValidRole(r) {
+	script, err := validators.CreateDefaultMultiSigRedeemScript()
+	if err != nil {
+		return common.Address{}, err
+	}
+	return hash.Hash160(script), nil
+}
+
+func (d *Designate) GetSysAccounts(s *dao.Simple, index uint32) (keys.PublicKeys, error) {
+	committee, err := d.GetCommitteeMembers(s, index)
+	if err != nil {
+		return nil, err
+	}
+	validators, err := d.GetValidators(s, index)
+	if err != nil {
+		return nil, err
+	}
+	return append(committee, validators...), nil
+}
+
+func (d *Designate) GetSysAddresses(s *dao.Simple, index uint32) ([]common.Address, error) {
+	accounts, err := d.GetSysAccounts(s, index)
+	if err != nil {
+		return nil, err
+	}
+	addrs := make([]common.Address, len(accounts))
+	for i, account := range accounts {
+		addrs[i] = account.Address()
+	}
+	return addrs, nil
+}
+
+func (d *Designate) GetAdminAccounts(s *dao.Simple, index uint32) (keys.PublicKeys, error) {
+	return d.GetCommitteeMembers(s, index)
+}
+
+func (d *Designate) GetAdminAddresses(s *dao.Simple, index uint32) ([]common.Address, error) {
+	accounts, err := d.GetCommitteeMembers(s, index)
+	if err != nil {
+		return nil, err
+	}
+	addrs := make([]common.Address, len(accounts)+1)
+	for i, account := range accounts {
+		addrs[i] = account.Address()
+	}
+	committeeAddress, err := createCommitteeAddress(accounts)
+	if err != nil {
+		return nil, err
+	}
+	addrs[len(addrs)-1] = committeeAddress
+	return addrs, nil
+}
+
+func (d *Designate) designateAsRole(ic InteropContext, r noderoles.Role, keys keys.PublicKeys) error {
+	if !noderoles.IsValid(r) {
 		return ErrInvalidRole
 	}
-	h := s.NEO.GetCommitteeAddress(ic.DAO)
-	if ok, err := runtime.CheckHashedWitness(ic, h); err != nil || !ok {
-		return ErrInvalidWitness
-	}
-	if ic.Block == nil {
-		return ErrNoBlock
-	}
-	var key = make([]byte, 5)
-	key[0] = byte(r)
-	binary.BigEndian.PutUint32(key[1:], ic.Block.Index+1)
-
-	si := ic.DAO.GetStorageItem(s.ID, key)
-	if si != nil {
-		return ErrAlreadyDesignated
-	}
-	sort.Sort(pubs)
-	nl := NodeList(pubs)
-
-	err := putConvertibleToDAO(s.ID, ic.DAO, key, &nl)
+	err := checkCommittee(ic)
 	if err != nil {
 		return err
 	}
-
-	cache := ic.DAO.GetRWCache(s.ID).(*DesignationCache)
-	err = s.updateCachedRoleData(cache, ic.DAO, r)
-	if err != nil {
-		return fmt.Errorf("failed to update Designation role data cache: %w", err)
+	ks := keys.Unique()
+	if ks.Len() == 0 {
+		return ErrEmptyNodeList
 	}
-
-	ic.AddNotification(s.Hash, DesignationEventName, stackitem.NewArray([]stackitem.Item{
-		stackitem.NewBigInteger(big.NewInt(int64(r))),
-		stackitem.NewBigInteger(big.NewInt(int64(ic.Block.Index))),
-	}))
+	if ks.Len() > MaxNodeCount {
+		return ErrLargeNodeList
+	}
+	index := ic.PersistingBlock().Index + 1
+	if r == noderoles.Validator {
+		index += 1
+	}
+	committee, err := d.GetCommitteeAddress(ic.Dao(), index)
+	if err != nil {
+		return err
+	}
+	if ic.Sender() != committee {
+		return ErrInvalidSender
+	}
+	sort.Sort(ks)
+	ic.Dao().PutStorageItem(d.Address, createRoleKey(r, index), ks.Bytes())
 	return nil
 }
 
-func (s *Designate) getRole(item stackitem.Item) (noderoles.Role, bool) {
-	bi, err := item.TryInteger()
+func (g *Designate) designateRawAsRole(ic InteropContext, input []byte) error {
+	if len(input) < 2 {
+		return ErrInvalidInput
+	}
+	r := noderoles.Role(input[0])
+	pks := keys.PublicKeys{}
+	err := pks.DecodeBytes(input[1:])
 	if err != nil {
-		return 0, false
+		return err
 	}
-	if !bi.IsUint64() {
-		return 0, false
+	return g.designateAsRole(ic, r, pks)
+}
+
+func (g *Designate) RequiredGas(ic InteropContext, input []byte) uint64 {
+	if len(input) < 1 {
+		return 0
 	}
-	u := bi.Uint64()
-	return noderoles.Role(u), u <= math.MaxUint8 && s.isValidRole(noderoles.Role(u))
+	switch input[0] {
+	case 0x00:
+		return 0
+	case 0x01:
+		return defaultNativeWriteFee
+	default:
+		return 0
+	}
+}
+
+func (g *Designate) Run(ic InteropContext, input []byte) ([]byte, error) {
+	if len(input) < 1 {
+		return nil, ErrEmptyInput
+	}
+	switch input[0] {
+	case 0x00:
+		return []byte{}, g.initialize(ic)
+	case 0x01:
+		return []byte{}, g.designateRawAsRole(ic, input[1:])
+	default:
+		return nil, ErrInvalidMethodID
+	}
 }

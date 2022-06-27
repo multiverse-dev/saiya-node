@@ -34,6 +34,11 @@ func (s *MemoryStore) Get(key []byte) ([]byte, error) {
 	return nil, ErrKeyNotFound
 }
 
+func (s *MemoryStore) Put(key, value []byte) error {
+	s.mem[string(key)] = value
+	return nil
+}
+
 func (s *MemoryStore) chooseMap(key []byte) map[string][]byte {
 	switch KeyPrefix(key[0]) {
 	case STStorage, STTempStorage:

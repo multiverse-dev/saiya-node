@@ -1,12 +1,15 @@
 package noderoles
 
-// Role represents the type of the participant.
+// Role represents type of participant.
 type Role byte
 
 // Role enumeration.
 const (
-	StateValidator Role = 4
-	Oracle         Role = 8
-	NeoFSAlphabet  Role = 16
-	P2PNotary      Role = 32
+	Validator      Role = 0
+	Committee      Role = 1
+	StateValidator Role = 2
 )
+
+func IsValid(r Role) bool {
+	return r == Committee || r == Validator || r == StateValidator
+}

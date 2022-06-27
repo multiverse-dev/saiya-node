@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
 )
 
 type dump []blockDump
@@ -73,13 +73,6 @@ func readFile(path string) (*dump, error) {
 	return d, err
 }
 
-// getPath returns filename for storing blocks up to index.
-// Directory structure is the following:
-// https://github.com/NeoResearch/neo-storage-audit#folder-organization-where-to-find-the-desired-block
-// Dir `BlockStorage_$DIRNO` contains blocks up to $DIRNO (from $DIRNO-100k)
-// Inside it there are files grouped by 1k blocks.
-// File dump-block-$FILENO.json contains blocks from $FILENO-999, $FILENO
-// Example: file `BlockStorage_100000/dump-block-6000.json` contains blocks from 5001 to 6000.
 func getPath(prefix string, index uint32) (string, error) {
 	dirN := ((index + 99999) / 100000) * 100000
 	dir := fmt.Sprintf("BlockStorage_%d", dirN)

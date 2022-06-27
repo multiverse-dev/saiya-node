@@ -3,12 +3,11 @@ package stateroot
 import (
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/vm/emit"
-	"github.com/nspcc-dev/neo-go/pkg/wallet"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"go.uber.org/zap"
 )
 
@@ -16,11 +15,6 @@ const (
 	voteValidEndInc      = 10
 	firstVoteResendDelay = 3 * time.Second
 )
-
-// Name returns service name.
-func (s *service) Name() string {
-	return "stateroot"
-}
 
 // Start runs service instance in a separate goroutine.
 func (s *service) Start() {
@@ -73,13 +67,13 @@ func (s *service) signAndSend(r *state.MPTRoot) error {
 		return nil
 	}
 
-	sig := acc.PrivateKey().SignHashable(uint32(s.Network), r)
+	sig := acc.PrivateKey().SignHashable(s.ChainID, r)
 	incRoot := s.getIncompleteRoot(r.Index, myIndex)
 	incRoot.Lock()
 	defer incRoot.Unlock()
 	incRoot.root = r
 	incRoot.addSignature(acc.PrivateKey().PublicKey(), sig)
-	incRoot.reverify(s.Network)
+	incRoot.reverify(s.ChainID)
 	s.trySendRoot(incRoot, acc)
 
 	msg := NewMessage(VoteT, &Vote{
@@ -99,22 +93,19 @@ func (s *service) signAndSend(r *state.MPTRoot) error {
 		ValidBlockEnd:   r.Index + voteValidEndInc,
 		Sender:          acc.PrivateKey().GetScriptHash(),
 		Data:            w.Bytes(),
-		Witness: transaction.Witness{
-			VerificationScript: acc.GetVerificationScript(),
-		},
+		Witness:         transaction.Witness{},
 	}
-	sig = acc.PrivateKey().SignHashable(uint32(s.Network), e)
-	buf := io.NewBufBinWriter()
-	emit.Bytes(buf.BinWriter, sig)
-	e.Witness.InvocationScript = buf.Bytes()
+	sig = acc.PrivateKey().SignHashable(s.ChainID, e)
+	e.Witness.VerificationScript = acc.PrivateKey().PublicKey().CreateVerificationScript()
+	e.Witness.InvocationScript = sig
 	incRoot.myVote = e
 	incRoot.retries = -1
 	s.sendVote(incRoot)
 	return nil
 }
 
-// sendVote attempts to send a vote if it's still valid and if stateroot message
-// has not been sent yet. It must be called with the ir locked.
+// sendVote attempts to send vote if it's still valid and if stateroot message
+// was not sent yet. It must be called with ir locked.
 func (s *service) sendVote(ir *incompleteRoot) {
 	if ir.isSent || ir.retries >= s.maxRetries ||
 		s.chain.HeaderHeight() >= ir.myVote.ValidBlockEnd {
@@ -133,7 +124,7 @@ func (s *service) sendVote(ir *incompleteRoot) {
 	ir.retries++
 }
 
-// getAccount returns the current index and account for the node running this service.
+// getAccount returns current index and account for the node running this service.
 func (s *service) getAccount() (byte, *wallet.Account) {
 	s.accMtx.RLock()
 	defer s.accMtx.RUnlock()

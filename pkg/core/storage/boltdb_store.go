@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util/slice"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/util/slice"
 	"go.etcd.io/bbolt"
 )
 
@@ -62,6 +62,22 @@ func (s *BoltDBStore) Get(key []byte) (val []byte, err error) {
 		err = ErrKeyNotFound
 	}
 	return
+}
+
+func (s *BoltDBStore) Put(key, value []byte) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(Bucket)
+		var err error
+		if value != nil {
+			err = b.Put([]byte(key), value)
+		} else {
+			err = b.Delete([]byte(key))
+		}
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // PutChangeSet implements the Store interface.

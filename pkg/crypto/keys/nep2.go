@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/base58"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/encoding/base58"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/text/unicode/norm"
 )
@@ -40,10 +40,10 @@ func NEP2ScryptParams() ScryptParams {
 	}
 }
 
-// NEP2Encrypt encrypts a the PrivateKey using the given passphrase
+// NEP2Encrypt encrypts a the PrivateKey using a given passphrase
 // under the NEP-2 standard.
 func NEP2Encrypt(priv *PrivateKey, passphrase string, params ScryptParams) (s string, err error) {
-	address := priv.Address()
+	address := priv.Base58Address()
 
 	addrHash := hash.Checksum([]byte(address))
 	// Normalize the passphrase according to the NFC standard.
@@ -75,7 +75,7 @@ func NEP2Encrypt(priv *PrivateKey, passphrase string, params ScryptParams) (s st
 	return base58.CheckEncode(buf.Bytes()), nil
 }
 
-// NEP2Decrypt decrypts an encrypted key using the given passphrase
+// NEP2Decrypt decrypts an encrypted key using a given passphrase
 // under the NEP-2 standard.
 func NEP2Decrypt(key, passphrase string, params ScryptParams) (*PrivateKey, error) {
 	b, err := base58.CheckDecode(key)
@@ -119,7 +119,7 @@ func NEP2Decrypt(key, passphrase string, params ScryptParams) (*PrivateKey, erro
 }
 
 func compareAddressHash(priv *PrivateKey, inhash []byte) bool {
-	address := priv.Address()
+	address := priv.Base58Address()
 	addrHash := hash.Checksum([]byte(address))
 	return bytes.Equal(addrHash, inhash)
 }

@@ -10,25 +10,18 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/rfc6979"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/rfc6979"
 )
 
-// PrivateKey represents a NEO private key and provides a high level API around
-// ecdsa.PrivateKey.
 type PrivateKey struct {
 	ecdsa.PrivateKey
 }
 
 // NewPrivateKey creates a new random Secp256r1 private key.
 func NewPrivateKey() (*PrivateKey, error) {
-	return newPrivateKeyOnCurve(elliptic.P256())
-}
-
-// NewSecp256k1PrivateKey creates a new random Secp256k1 private key.
-func NewSecp256k1PrivateKey() (*PrivateKey, error) {
 	return newPrivateKeyOnCurve(btcec.S256())
 }
 
@@ -51,8 +44,6 @@ func NewPrivateKeyFromHex(str string) (*PrivateKey, error) {
 	return NewPrivateKeyFromBytes(b)
 }
 
-// NewPrivateKeyFromBytes returns a NEO Secp256r1 PrivateKey from the given
-// byte slice.
 func NewPrivateKeyFromBytes(b []byte) (*PrivateKey, error) {
 	if len(b) != 32 {
 		return nil, fmt.Errorf(
@@ -60,7 +51,7 @@ func NewPrivateKeyFromBytes(b []byte) (*PrivateKey, error) {
 		)
 	}
 	var (
-		c = elliptic.P256()
+		c = btcec.S256()
 		d = new(big.Int).SetBytes(b)
 	)
 
@@ -78,8 +69,6 @@ func NewPrivateKeyFromBytes(b []byte) (*PrivateKey, error) {
 	}, nil
 }
 
-// NewPrivateKeyFromASN1 returns a NEO Secp256k1 PrivateKey from the ASN.1
-// serialized key.
 func NewPrivateKeyFromASN1(b []byte) (*PrivateKey, error) {
 	privkey, err := x509.ParseECPrivateKey(b)
 	if err != nil {
@@ -94,39 +83,19 @@ func (p *PrivateKey) PublicKey() *PublicKey {
 	return &result
 }
 
-// NewPrivateKeyFromWIF returns a NEO PrivateKey from the given
-// WIF (wallet import format).
-func NewPrivateKeyFromWIF(wif string) (*PrivateKey, error) {
-	w, err := WIFDecode(wif, WIFVersion)
-	if err != nil {
-		return nil, err
-	}
-	return w.PrivateKey, nil
-}
-
-// WIF returns the (wallet import format) of the PrivateKey.
-// Good documentation about this process can be found here:
-// https://en.bitcoin.it/wiki/Wallet_import_format
-func (p *PrivateKey) WIF() string {
-	w, err := WIFEncode(p.Bytes(), WIFVersion, true)
-	// The only way WIFEncode() can fail is if we're to give it a key of
-	// wrong size, but we have a proper key here, aren't we?
-	if err != nil {
-		panic(err)
-	}
-	return w
-}
-
-// Address derives the public NEO address that is coupled with the private key, and
-// returns it as a string.
-func (p *PrivateKey) Address() string {
+func (p *PrivateKey) Address() common.Address {
 	pk := p.PublicKey()
 	return pk.Address()
 }
 
-// GetScriptHash returns verification script hash for the public key associated with
+func (p *PrivateKey) Base58Address() string {
+	pk := p.PublicKey()
+	return pk.Base58Address()
+}
+
+// GetScriptHash returns verification script hash for public key associated with
 // the private key.
-func (p *PrivateKey) GetScriptHash() util.Uint160 {
+func (p *PrivateKey) GetScriptHash() common.Address {
 	pk := p.PublicKey()
 	return pk.GetScriptHash()
 }
@@ -140,16 +109,16 @@ func (p *PrivateKey) Sign(data []byte) []byte {
 	return p.SignHash(digest)
 }
 
-// SignHash signs a particular hash with the private key.
-func (p *PrivateKey) SignHash(digest util.Uint256) []byte {
+// SignHash signs particular hash the private key.
+func (p *PrivateKey) SignHash(digest common.Hash) []byte {
 	r, s := rfc6979.SignECDSA(&p.PrivateKey, digest[:], sha256.New)
 	return getSignatureSlice(p.PrivateKey.Curve, r, s)
 }
 
 // SignHashable signs some Hashable item for the network specified using
 // hash.NetSha256() with the private key.
-func (p *PrivateKey) SignHashable(net uint32, hh hash.Hashable) []byte {
-	return p.SignHash(hash.NetSha256(net, hh))
+func (p *PrivateKey) SignHashable(chainId uint64, hh hash.Hashable) []byte {
+	return p.SignHash(hash.NetKeccak256(chainId, hh))
 }
 
 func getSignatureSlice(curve elliptic.Curve, r, s *big.Int) []byte {

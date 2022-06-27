@@ -4,18 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// EmptyNode represents an empty node.
+// EmptyNode represents empty node.
 type EmptyNode struct{}
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (e EmptyNode) DecodeBinary(*io.BinReader) {
 }
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (e EmptyNode) EncodeBinary(*io.BinWriter) {
 }
 
@@ -41,7 +41,7 @@ func (e EmptyNode) UnmarshalJSON(bytes []byte) error {
 }
 
 // Hash implements Node interface.
-func (e EmptyNode) Hash() util.Uint256 {
+func (e EmptyNode) Hash() common.Hash {
 	panic("can't get hash of an EmptyNode")
 }
 

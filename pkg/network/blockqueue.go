@@ -3,12 +3,12 @@ package network
 import (
 	"sync"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
-// Blockqueuer is an interface for a block queue.
+// Blockqueuer is the interface for block queue.
 type Blockqueuer interface {
 	AddBlock(block *block.Block) error
 	AddHeaders(...*block.Header) error
@@ -28,8 +28,8 @@ type blockQueue struct {
 }
 
 const (
-	// blockCacheSize is the amount of blocks above the current height
-	// which are stored in the queue.
+	// blockCacheSize is the amount of blocks above current height
+	// which are stored in queue.
 	blockCacheSize = 2000
 )
 
@@ -80,7 +80,7 @@ func (bq *blockQueue) run() {
 
 			err := bq.chain.AddBlock(b)
 			if err != nil {
-				// The block might already be added by the consensus.
+				// The block might already be added by consensus.
 				if bq.chain.BlockHeight() < b.Index {
 					bq.log.Warn("blockQueue: failed adding block into the blockchain",
 						zap.String("error", err.Error()),
@@ -105,17 +105,14 @@ func (bq *blockQueue) run() {
 func (bq *blockQueue) putBlock(block *block.Block) error {
 	h := bq.chain.BlockHeight()
 	bq.queueLock.Lock()
-	defer bq.queueLock.Unlock()
-	if bq.discarded.Load() {
-		return nil
-	}
 	if block.Index <= h || h+blockCacheSize < block.Index {
 		// can easily happen when fetching the same blocks from
 		// different peers, thus not considered as error
+		bq.queueLock.Unlock()
 		return nil
 	}
 	pos := indexToPosition(block.Index)
-	// If we already have it, keep the old block, throw away the new one.
+	// If we already have it, keep the old block, throw away new one.
 	if bq.queue[pos] == nil || bq.queue[pos].Index < block.Index {
 		bq.len++
 		bq.queue[pos] = block
@@ -125,6 +122,7 @@ func (bq *blockQueue) putBlock(block *block.Block) error {
 		}
 	}
 	l := bq.len
+	bq.queueLock.Unlock()
 	// update metrics
 	updateBlockQueueLenMetric(l)
 	select {
@@ -144,8 +142,8 @@ func (bq *blockQueue) lastQueued() uint32 {
 
 func (bq *blockQueue) discard() {
 	if bq.discarded.CAS(false, true) {
-		bq.queueLock.Lock()
 		close(bq.checkBlocks)
+		bq.queueLock.Lock()
 		// Technically we could bq.queue = nil, but this would cost
 		// another if in run().
 		for i := 0; i < len(bq.queue); i++ {

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"math"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const (
@@ -48,8 +48,8 @@ type auxBlockIn struct {
 }
 
 // ComputeMerkleRoot computes Merkle tree root hash based on actual block's data.
-func (b *Block) ComputeMerkleRoot() util.Uint256 {
-	hashes := make([]util.Uint256, len(b.Transactions))
+func (b *Block) ComputeMerkleRoot() common.Hash {
+	hashes := make([]common.Hash, len(b.Transactions))
 	for i, tx := range b.Transactions {
 		hashes[i] = tx.Hash()
 	}
@@ -66,11 +66,9 @@ func (b *Block) RebuildMerkleRoot() {
 // This is commonly used to create a block from stored data.
 // Blocks created from trimmed data will have their Trimmed field
 // set to true.
-func NewTrimmedFromReader(stateRootEnabled bool, br *io.BinReader) (*Block, error) {
+func NewTrimmedFromReader(br *io.BinReader) (*Block, error) {
 	block := &Block{
-		Header: Header{
-			StateRootEnabled: stateRootEnabled,
-		},
+		Header:  Header{},
 		Trimmed: true,
 	}
 
@@ -82,8 +80,8 @@ func NewTrimmedFromReader(stateRootEnabled bool, br *io.BinReader) (*Block, erro
 	if lenHashes > 0 {
 		block.Transactions = make([]*transaction.Transaction, lenHashes)
 		for i := 0; i < int(lenHashes); i++ {
-			var hash util.Uint256
-			hash.DecodeBinary(br)
+			var hash common.Hash
+			br.ReadBytes(hash[:])
 			block.Transactions[i] = transaction.NewTrimmedTX(hash)
 		}
 	}
@@ -92,11 +90,9 @@ func NewTrimmedFromReader(stateRootEnabled bool, br *io.BinReader) (*Block, erro
 }
 
 // New creates a new blank block with proper state root setting.
-func New(stateRootEnabled bool) *Block {
+func New() *Block {
 	return &Block{
-		Header: Header{
-			StateRootEnabled: stateRootEnabled,
-		},
+		Header: Header{},
 	}
 }
 
@@ -108,7 +104,7 @@ func (b *Block) EncodeTrimmed(w *io.BinWriter) {
 	w.WriteVarUint(uint64(len(b.Transactions)))
 	for _, tx := range b.Transactions {
 		h := tx.Hash()
-		h.EncodeBinary(w)
+		w.WriteBytes(h.Bytes())
 	}
 }
 
@@ -143,7 +139,7 @@ func (b *Block) EncodeBinary(bw *io.BinWriter) {
 	}
 }
 
-// MarshalJSON implements the json.Marshaler interface.
+// MarshalJSON implements json.Marshaler interface.
 func (b Block) MarshalJSON() ([]byte, error) {
 	auxb, err := json.Marshal(auxBlockOut{
 		Transactions: b.Transactions,
@@ -165,7 +161,7 @@ func (b Block) MarshalJSON() ([]byte, error) {
 	return baseBytes, nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (b *Block) UnmarshalJSON(data []byte) error {
 	// As Base and auxb are at the same level in json,
 	// do unmarshalling separately for both structs.
@@ -192,7 +188,7 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// GetExpectedBlockSize returns the expected block size which should be equal to io.GetVarSize(b).
+// GetExpectedBlockSize returns expected block size which should be equal to io.GetVarSize(b).
 func (b *Block) GetExpectedBlockSize() int {
 	var transactionsSize int
 	for _, tx := range b.Transactions {
@@ -201,13 +197,10 @@ func (b *Block) GetExpectedBlockSize() int {
 	return b.GetExpectedBlockSizeWithoutTransactions(len(b.Transactions)) + transactionsSize
 }
 
-// GetExpectedBlockSizeWithoutTransactions returns the expected block size without transactions size.
+// GetExpectedBlockSizeWithoutTransactions returns expected block size without transactions size.
 func (b *Block) GetExpectedBlockSizeWithoutTransactions(txCount int) int {
 	size := expectedHeaderSizeWithEmptyWitness - 1 - 1 + // 1 is for the zero-length (new(Header)).Script.Invocation/Verification
-		io.GetVarSize(&b.Script) +
+		io.GetVarSize(&b.Witness) +
 		io.GetVarSize(txCount)
-	if b.StateRootEnabled {
-		size += util.Uint256Size
-	}
 	return size
 }

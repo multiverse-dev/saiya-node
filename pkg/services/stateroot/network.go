@@ -4,13 +4,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/vm/emit"
-	"github.com/nspcc-dev/neo-go/pkg/wallet"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"go.uber.org/zap"
 )
 
@@ -19,7 +18,7 @@ const rootValidEndInc = 100
 // RelayCallback represents callback for sending validated state roots.
 type RelayCallback = func(*payload.Extensible)
 
-// AddSignature adds a state root signature.
+// AddSignature adds state root signature.
 func (s *service) AddSignature(height uint32, validatorIndex int32, sig []byte) error {
 	if !s.MainCfg.Enabled {
 		return nil
@@ -43,7 +42,7 @@ func (s *service) AddSignature(height uint32, validatorIndex int32, sig []byte) 
 
 	pub := incRoot.svList[validatorIndex]
 	if incRoot.root != nil {
-		ok := pub.VerifyHashable(sig, uint32(s.Network), incRoot.root)
+		ok := pub.VerifyHashable(sig, s.ChainID, incRoot.root)
 		if !ok {
 			return fmt.Errorf("invalid state root signature for %d", validatorIndex)
 		}
@@ -73,7 +72,7 @@ func (s *service) getIncompleteRoot(height uint32, myIndex byte) *incompleteRoot
 	return incRoot
 }
 
-// trySendRoot attempts to finalize and send MPTRoot, it must be called with the ir locked.
+// trySendRoot attempts to finalize and send MPTRoot, it must be called with ir locked.
 func (s *service) trySendRoot(ir *incompleteRoot, acc *wallet.Account) {
 	if !ir.isSenderNow() {
 		return
@@ -101,12 +100,9 @@ func (s *service) sendValidatedRoot(r *state.MPTRoot, acc *wallet.Account) {
 		Sender:          priv.GetScriptHash(),
 		Data:            w.Bytes(),
 		Witness: transaction.Witness{
-			VerificationScript: acc.GetVerificationScript(),
+			VerificationScript: acc.PrivateKey().PublicKey().CreateVerificationScript(),
 		},
 	}
-	sig := priv.SignHashable(uint32(s.Network), ep)
-	buf := io.NewBufBinWriter()
-	emit.Bytes(buf.BinWriter, sig)
-	ep.Witness.InvocationScript = buf.Bytes()
+	ep.Witness.InvocationScript = priv.SignHashable(s.ChainID, ep)
 	s.relayExtensible(ep)
 }

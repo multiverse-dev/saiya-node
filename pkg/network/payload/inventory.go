@@ -1,11 +1,11 @@
 package payload
 
 import (
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// A node can broadcast the object information it owns by this message.
+// The node can broadcast the object information it owns by this message.
 // The message can be sent automatically or can be used to answer getblock messages.
 
 // InventoryType is the type of an object in the Inventory message.
@@ -28,8 +28,8 @@ func (i InventoryType) String() string {
 }
 
 // Valid returns true if the inventory (type) is known.
-func (i InventoryType) Valid(p2pSigExtensionsEnabled bool) bool {
-	return i == BlockType || i == TXType || i == ExtensibleType || (p2pSigExtensionsEnabled && i == P2PNotaryRequestType)
+func (i InventoryType) Valid() bool {
+	return i == BlockType || i == TXType || i == ExtensibleType
 }
 
 // List of valid InventoryTypes.
@@ -42,29 +42,36 @@ const (
 
 // Inventory payload.
 type Inventory struct {
-	// Type of the object hash.
+	// Type if the object hash.
 	Type InventoryType
 
 	// A list of hashes.
-	Hashes []util.Uint256
+	Hashes []common.Hash
 }
 
-// NewInventory returns a pointer to an Inventory.
-func NewInventory(typ InventoryType, hashes []util.Uint256) *Inventory {
+// NewInventory return a pointer to an Inventory.
+func NewInventory(typ InventoryType, hashes []common.Hash) *Inventory {
 	return &Inventory{
 		Type:   typ,
 		Hashes: hashes,
 	}
 }
 
-// DecodeBinary implements the Serializable interface.
+// DecodeBinary implements Serializable interface.
 func (p *Inventory) DecodeBinary(br *io.BinReader) {
 	p.Type = InventoryType(br.ReadB())
-	br.ReadArray(&p.Hashes, MaxHashesCount)
+	count := br.ReadVarUint()
+	p.Hashes = make([]common.Hash, count)
+	for i := uint64(0); i < count; i++ {
+		br.ReadBytes(p.Hashes[i][:])
+	}
 }
 
-// EncodeBinary implements the Serializable interface.
+// EncodeBinary implements Serializable interface.
 func (p *Inventory) EncodeBinary(bw *io.BinWriter) {
 	bw.WriteB(byte(p.Type))
-	bw.WriteArray(p.Hashes)
+	bw.WriteVarUint(uint64(len(p.Hashes)))
+	for _, hash := range p.Hashes {
+		bw.WriteBytes(hash[:])
+	}
 }

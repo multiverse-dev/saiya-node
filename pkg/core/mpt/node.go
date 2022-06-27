@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// NodeType represents a node type..
+// NodeType represents node type..
 type NodeType byte
 
 // Node types definitions.
@@ -21,14 +21,14 @@ const (
 	EmptyT     NodeType = 0x04
 )
 
-// NodeObject represents a Node together with it's type.
+// NodeObject represents Node together with it's type.
 // It is used for serialization/deserialization where type info
 // is also expected.
 type NodeObject struct {
 	Node
 }
 
-// Node represents a common interface of all MPT nodes.
+// Node represents common interface of all MPT nodes.
 type Node interface {
 	io.Serializable
 	json.Marshaler
@@ -48,7 +48,7 @@ func (n *NodeObject) DecodeBinary(r *io.BinReader) {
 	n.Node = DecodeNodeWithType(r)
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (n *NodeObject) UnmarshalJSON(data []byte) error {
 	var m map[string]json.RawMessage
 	err := json.Unmarshal(data, &m)
@@ -73,7 +73,7 @@ func (n *NodeObject) UnmarshalJSON(data []byte) error {
 		n.Node = EmptyNode{}
 	case 1:
 		if v, ok := m["hash"]; ok {
-			var h util.Uint256
+			var h common.Hash
 			if err := json.Unmarshal(v, &h); err != nil {
 				return err
 			}

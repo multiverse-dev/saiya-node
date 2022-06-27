@@ -3,21 +3,19 @@ package wallet
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 )
 
 const (
-	// The current version of neo-go wallet implementations.
 	walletVersion = "3.0"
 )
 
-// Wallet represents a NEO (NEP-2, NEP-6) compliant wallet.
 type Wallet struct {
 	// Version of the wallet, used for later upgrades.
 	Version string `json:"version"`
@@ -42,7 +40,6 @@ type Extra struct {
 	Tokens []*Token
 }
 
-// NewWallet creates a new NEO wallet at the given location.
 func NewWallet(location string) (*Wallet, error) {
 	file, err := os.Create(location)
 	if err != nil {
@@ -94,6 +91,7 @@ func (w *Wallet) CreateAccount(name, passphrase string) error {
 		return err
 	}
 	w.AddAccount(acc)
+	fmt.Printf("account created, address: %s\n", acc.Address)
 	return w.Save()
 }
 
@@ -106,7 +104,7 @@ func (w *Wallet) AddAccount(acc *Account) {
 // from the wallet.
 func (w *Wallet) RemoveAccount(addr string) error {
 	for i, acc := range w.Accounts {
-		if acc.Address == addr {
+		if acc.Address == common.HexToAddress(addr) {
 			copy(w.Accounts[i:], w.Accounts[i+1:])
 			w.Accounts = w.Accounts[:len(w.Accounts)-1]
 			return nil
@@ -115,15 +113,15 @@ func (w *Wallet) RemoveAccount(addr string) error {
 	return errors.New("account wasn't found")
 }
 
-// AddToken adds a new token to a wallet.
+// AddToken adds new token to a wallet.
 func (w *Wallet) AddToken(tok *Token) {
 	w.Extra.Tokens = append(w.Extra.Tokens, tok)
 }
 
-// RemoveToken removes the token with the specified hash from the wallet.
-func (w *Wallet) RemoveToken(h util.Uint160) error {
+// RemoveToken removes token with the specified hash from the wallet.
+func (w *Wallet) RemoveToken(h common.Address) error {
 	for i, tok := range w.Extra.Tokens {
-		if tok.Hash.Equals(h) {
+		if tok.Hash == h {
 			copy(w.Extra.Tokens[i:], w.Extra.Tokens[i+1:])
 			w.Extra.Tokens = w.Extra.Tokens[:len(w.Extra.Tokens)-1]
 			return nil
@@ -149,16 +147,6 @@ func (w *Wallet) Save() error {
 	return w.writeRaw(data)
 }
 
-// savePretty saves the wallet in a beautiful JSON.
-func (w *Wallet) savePretty() error {
-	data, err := json.MarshalIndent(w, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return w.writeRaw(data)
-}
-
 func (w *Wallet) writeRaw(data []byte) error {
 	return os.WriteFile(w.path, data, 0644)
 }
@@ -172,9 +160,8 @@ func (w *Wallet) JSON() ([]byte, error) {
 func (w *Wallet) Close() {
 }
 
-// GetAccount returns an account corresponding to the provided scripthash.
-func (w *Wallet) GetAccount(h util.Uint160) *Account {
-	addr := address.Uint160ToString(h)
+// GetAccount returns account corresponding to the provided scripthash.
+func (w *Wallet) GetAccount(addr common.Address) *Account {
 	for _, acc := range w.Accounts {
 		if acc.Address == addr {
 			return acc
@@ -185,22 +172,6 @@ func (w *Wallet) GetAccount(h util.Uint160) *Account {
 }
 
 // GetChangeAddress returns the default address to send transaction's change to.
-func (w *Wallet) GetChangeAddress() util.Uint160 {
-	var res util.Uint160
-	var acc *Account
-
-	for i := range w.Accounts {
-		if acc == nil || w.Accounts[i].Default {
-			if w.Accounts[i].Contract != nil && vm.IsSignatureContract(w.Accounts[i].Contract.Script) {
-				acc = w.Accounts[i]
-				if w.Accounts[i].Default {
-					break
-				}
-			}
-		}
-	}
-	if acc != nil {
-		res = acc.Contract.ScriptHash()
-	}
-	return res
+func (w *Wallet) GetChangeAddress() common.Address {
+	return hash.Hash160(w.Accounts[0].PrivateKey().PublicKey().CreateVerificationScript())
 }

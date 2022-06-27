@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,22 +9,19 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/nspcc-dev/neo-go/cli/options"
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/consensus"
-	"github.com/nspcc-dev/neo-go/pkg/core"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/chaindump"
-	corestate "github.com/nspcc-dev/neo-go/pkg/core/stateroot"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network"
-	"github.com/nspcc-dev/neo-go/pkg/network/metrics"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/server"
-	"github.com/nspcc-dev/neo-go/pkg/services/notary"
-	"github.com/nspcc-dev/neo-go/pkg/services/oracle"
-	"github.com/nspcc-dev/neo-go/pkg/services/stateroot"
+	"github.com/multiverse-dev/saiya/cli/options"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/consensus"
+	"github.com/multiverse-dev/saiya/pkg/core"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/chaindump"
+	corestate "github.com/multiverse-dev/saiya/pkg/core/stateroot"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network"
+	"github.com/multiverse-dev/saiya/pkg/network/metrics"
+	"github.com/multiverse-dev/saiya/pkg/rpc/server"
+	"github.com/multiverse-dev/saiya/pkg/services/stateroot"
 	"github.com/urfave/cli"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -84,9 +80,12 @@ func NewCommands() []cli.Command {
 	return []cli.Command{
 		{
 			Name:   "node",
-			Usage:  "start a NEO node",
+			Usage:  "start a saiya node",
 			Action: startServer,
-			Flags:  cfgFlags,
+			Flags: append(cfgFlags, cli.BoolFlag{
+				Name:  "consensus",
+				Usage: "try start as consensus or not",
+			}),
 		},
 		{
 			Name:  "db",
@@ -120,8 +119,8 @@ func newGraceContext() context.Context {
 	return ctx
 }
 
-// getConfigFromContext looks at the path and the mode flags in the given config and
-// returns an appropriate config.
+// getConfigFromContext looks at path and mode flags in the given config and
+// returns appropriate config.
 func getConfigFromContext(ctx *cli.Context) (config.Config, error) {
 	configPath := "./config"
 	if argCp := ctx.String("config-path"); argCp != "" {
@@ -131,10 +130,10 @@ func getConfigFromContext(ctx *cli.Context) (config.Config, error) {
 }
 
 // handleLoggingParams reads logging parameters.
-// If a user selected debug level -- function enables it.
-// If logPath is configured -- function creates a dir and a file for logging.
+// If user selected debug level -- function enables it.
+// If logPath is configured -- function creates dir and file for logging.
 // If logPath is configured on Windows -- function returns closer to be
-// able to close sink for the opened log output file.
+// able to close sink for opened log output file.
 func handleLoggingParams(ctx *cli.Context, cfg config.ApplicationConfiguration) (*zap.Logger, func() error, error) {
 	level := zapcore.InfoLevel
 	if ctx.Bool("debug") {
@@ -385,26 +384,6 @@ func restoreDB(ctx *cli.Context) error {
 	return nil
 }
 
-func mkOracle(config network.ServerConfig, chain *core.Blockchain, serv *network.Server, log *zap.Logger) (*oracle.Oracle, error) {
-	if !config.OracleCfg.Enabled {
-		return nil, nil
-	}
-	orcCfg := oracle.Config{
-		Log:           log,
-		Network:       config.Net,
-		MainCfg:       config.OracleCfg,
-		Chain:         chain,
-		OnTransaction: serv.RelayTxn,
-	}
-	orc, err := oracle.NewOracle(orcCfg)
-	if err != nil {
-		return nil, fmt.Errorf("can't initialize Oracle module: %w", err)
-	}
-	chain.SetOracle(orc)
-	serv.AddService(orc)
-	return orc, nil
-}
-
 func mkConsensus(config network.ServerConfig, chain *core.Blockchain, serv *network.Server, log *zap.Logger) (consensus.Service, error) {
 	if config.Wallet == nil {
 		return nil, nil
@@ -426,35 +405,12 @@ func mkConsensus(config network.ServerConfig, chain *core.Blockchain, serv *netw
 	return srv, nil
 }
 
-func mkP2PNotary(config network.ServerConfig, chain *core.Blockchain, serv *network.Server, log *zap.Logger) (*notary.Notary, error) {
-	if !config.P2PNotaryCfg.Enabled {
-		return nil, nil
-	}
-	if !chain.P2PSigExtensionsEnabled() {
-		return nil, errors.New("P2PSigExtensions are disabled, but Notary service is enabled")
-	}
-	cfg := notary.Config{
-		MainCfg: config.P2PNotaryCfg,
-		Chain:   chain,
-		Log:     log,
-	}
-	n, err := notary.NewNotary(cfg, serv.Net, serv.GetNotaryPool(), func(tx *transaction.Transaction) error {
-		err := serv.RelayTxn(tx)
-		if err != nil && !errors.Is(err, core.ErrAlreadyExists) {
-			return fmt.Errorf("can't relay completed notary transaction: hash %s, error: %w", tx.Hash().StringLE(), err)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Notary module: %w", err)
-	}
-	serv.AddService(n)
-	chain.SetNotary(n)
-	return n, nil
-}
-
 func startServer(ctx *cli.Context) error {
 	cfg, err := getConfigFromContext(ctx)
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	asConsensus := ctx.Bool("consensus")
 	if err != nil {
 		return cli.NewExitError(err, 1)
 	}
@@ -481,7 +437,7 @@ func startServer(ctx *cli.Context) error {
 		chain.Close()
 	}()
 
-	serv, err := network.NewServer(serverConfig, chain, chain.GetStateSyncModule(), log)
+	serv, err := network.NewServer(serverConfig, chain, log)
 	if err != nil {
 		return cli.NewExitError(fmt.Errorf("failed to create network server: %w", err), 1)
 	}
@@ -492,26 +448,18 @@ func startServer(ctx *cli.Context) error {
 	}
 	serv.AddExtensibleService(sr, stateroot.Category, sr.OnPayload)
 
-	oracleSrv, err := mkOracle(serverConfig, chain, serv, log)
-	if err != nil {
-		return cli.NewExitError(err, 1)
+	if asConsensus {
+		_, err = mkConsensus(serverConfig, chain, serv, log)
+		if err != nil {
+			return cli.NewExitError(err, 1)
+		}
 	}
-	_, err = mkConsensus(serverConfig, chain, serv, log)
-	if err != nil {
-		return cli.NewExitError(err, 1)
-	}
-	_, err = mkP2PNotary(serverConfig, chain, serv, log)
-	if err != nil {
-		return cli.NewExitError(err, 1)
-	}
+
+	rpcServer := server.New(chain, cfg.ApplicationConfiguration.RPC, serv, serverConfig.Wallet, log)
 	errChan := make(chan error)
-	rpcServer := server.New(chain, cfg.ApplicationConfiguration.RPC, serv, oracleSrv, log, errChan)
-	serv.AddService(&rpcServer)
 
 	go serv.Start(errChan)
-	if !cfg.ApplicationConfiguration.RPC.StartWhenSynchronized {
-		rpcServer.Start()
-	}
+	rpcServer.Start(errChan)
 
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
@@ -531,16 +479,20 @@ Main:
 			switch sig {
 			case syscall.SIGHUP:
 				log.Info("SIGHUP received, restarting rpc-server")
-				rpcServer.Shutdown()
-				rpcServer = server.New(chain, cfg.ApplicationConfiguration.RPC, serv, oracleSrv, log, errChan)
-				serv.AddService(&rpcServer) // Replaces old one by service name.
-				if !cfg.ApplicationConfiguration.RPC.StartWhenSynchronized || serv.IsInSync() {
-					rpcServer.Start()
+				serverErr := rpcServer.Shutdown()
+				if serverErr != nil {
+					errChan <- fmt.Errorf("error while restarting rpc-server: %w", serverErr)
+					break
 				}
+				rpcServer = server.New(chain, cfg.ApplicationConfiguration.RPC, serv, serverConfig.Wallet, log)
+				rpcServer.Start(errChan)
 			}
 		case <-grace.Done():
 			signal.Stop(sighupCh)
 			serv.Shutdown()
+			if serverErr := rpcServer.Shutdown(); serverErr != nil {
+				shutdownErr = fmt.Errorf("error on shutdown: %w", serverErr)
+			}
 			break Main
 		}
 	}
@@ -584,13 +536,13 @@ func initBlockChain(cfg config.Config, log *zap.Logger) (*core.Blockchain, error
 	return chain, nil
 }
 
-// Logo returns Neo-Go logo.
 func Logo() string {
 	return `
-    _   ____________        __________
-   / | / / ____/ __ \      / ____/ __ \
-  /  |/ / __/ / / / /_____/ / __/ / / /
- / /|  / /___/ /_/ /_____/ /_/ / /_/ /
-/_/ |_/_____/\____/      \____/\____/
+      _____ _  __    __     ___
+     / ____/ \ \ \   \ \   / / \
+     \ \  / _ \ \ \   \ \_/ / _ \
+      \ \/ /_\ \ \ \   \   / /_\ \
+  ____/ /  ___  \ \ \   / /  ___  \
+ /_____/_/     \_\ \_\ /_/_/     \_\
 `
 }

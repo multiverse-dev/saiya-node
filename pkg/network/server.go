@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/big"
 	mrand "math/rand"
 	"net"
 	"sort"
@@ -13,17 +12,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/mempool"
-	"github.com/nspcc-dev/neo-go/pkg/core/mempoolevent"
-	"github.com/nspcc-dev/neo-go/pkg/core/mpt"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/capability"
-	"github.com/nspcc-dev/neo-go/pkg/network/extpool"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/mempool"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/network/capability"
+	"github.com/multiverse-dev/saiya/pkg/network/extpool"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -53,19 +49,14 @@ type (
 		extpool.Ledger
 		mempool.Feer
 		Blockqueuer
-		GetBlock(hash util.Uint256) (*block.Block, error)
+		GetBlock(hash common.Hash, full bool) (*block.Block, error)
 		GetConfig() config.ProtocolConfiguration
-		GetHeader(hash util.Uint256) (*block.Header, error)
-		GetHeaderHash(int) util.Uint256
-		GetMaxVerificationGAS() int64
+		GetHeader(hash common.Hash) (*block.Header, error)
+		GetHeaderHash(int) common.Hash
 		GetMemPool() *mempool.Pool
-		GetNotaryBalance(acc util.Uint160) *big.Int
-		GetNotaryContractScriptHash() util.Uint160
-		GetNotaryDepositExpiration(acc util.Uint160) uint32
-		GetTransaction(util.Uint256) (*transaction.Transaction, uint32, error)
-		HasBlock(util.Uint256) bool
+		GetTransaction(common.Hash) (*transaction.Transaction, uint32, error)
+		HasBlock(common.Hash) bool
 		HeaderHeight() uint32
-		P2PSigExtensionsEnabled() bool
 		PoolTx(t *transaction.Transaction, pools ...*mempool.Pool) error
 		PoolTxWithData(t *transaction.Transaction, data interface{}, mp *mempool.Pool, feer mempool.Feer, verificationFunction func(t *transaction.Transaction, data interface{}) error) error
 		RegisterPostBlock(f func(func(*transaction.Transaction, *mempool.Pool, bool) bool, *mempool.Pool, *block.Block))
@@ -75,7 +66,6 @@ type (
 
 	// Service is a service abstraction (oracle, state root, consensus, etc).
 	Service interface {
-		Name() string
 		Start()
 		Shutdown()
 	}
@@ -92,22 +82,19 @@ type (
 		// A copy of the Ledger's config.
 		config config.ProtocolConfiguration
 
-		transport         Transporter
-		discovery         Discoverer
-		chain             Ledger
-		bQueue            *blockQueue
-		bSyncQueue        *blockQueue
-		mempool           *mempool.Pool
-		notaryRequestPool *mempool.Pool
-		extensiblePool    *extpool.Pool
-		notaryFeer        NotaryFeer
-		services          map[string]Service
-		extensHandlers    map[string]func(*payload.Extensible) error
-		extensHighPrio    string
-		txCallback        func(*transaction.Transaction)
+		transport      Transporter
+		discovery      Discoverer
+		chain          Ledger
+		bQueue         *blockQueue
+		mempool        *mempool.Pool
+		extensiblePool *extpool.Pool
+		services       []Service
+		extensHandlers map[string]func(*payload.Extensible) error
+		extensHighPrio string
+		txCallback     func(*transaction.Transaction)
 
 		txInLock sync.Mutex
-		txInMap  map[util.Uint256]struct{}
+		txInMap  map[common.Hash]struct{}
 
 		lock  sync.RWMutex
 		peers map[Peer]bool
@@ -124,10 +111,7 @@ type (
 		transactions chan *transaction.Transaction
 
 		syncReached *atomic.Bool
-
-		stateSync StateSync
-
-		log *zap.Logger
+		log         *zap.Logger
 	}
 
 	peerDrop struct {
@@ -143,13 +127,13 @@ func randomID() uint32 {
 }
 
 // NewServer returns a new Server, initialized with the given configuration.
-func NewServer(config ServerConfig, chain Ledger, stSync StateSync, log *zap.Logger) (*Server, error) {
-	return newServerFromConstructors(config, chain, stSync, log, func(s *Server) Transporter {
+func NewServer(config ServerConfig, chain Ledger, log *zap.Logger) (*Server, error) {
+	return newServerFromConstructors(config, chain, log, func(s *Server) Transporter {
 		return NewTCPTransport(s, net.JoinHostPort(s.ServerConfig.Address, strconv.Itoa(int(s.ServerConfig.Port))), s.log)
 	}, newDefaultDiscovery)
 }
 
-func newServerFromConstructors(config ServerConfig, chain Ledger, stSync StateSync, log *zap.Logger,
+func newServerFromConstructors(config ServerConfig, chain Ledger, log *zap.Logger,
 	newTransport func(*Server) Transporter,
 	newDiscovery func([]string, time.Duration, Transporter) Discoverer,
 ) (*Server, error) {
@@ -171,32 +155,18 @@ func newServerFromConstructors(config ServerConfig, chain Ledger, stSync StateSy
 		quit:           make(chan struct{}),
 		register:       make(chan Peer),
 		unregister:     make(chan peerDrop),
-		txInMap:        make(map[util.Uint256]struct{}),
+		txInMap:        make(map[common.Hash]struct{}),
 		peers:          make(map[Peer]bool),
 		syncReached:    atomic.NewBool(false),
 		mempool:        chain.GetMemPool(),
 		extensiblePool: extpool.New(chain, config.ExtensiblePoolSize),
 		log:            log,
 		transactions:   make(chan *transaction.Transaction, 64),
-		services:       make(map[string]Service),
 		extensHandlers: make(map[string]func(*payload.Extensible) error),
-		stateSync:      stSync,
-	}
-	if chain.P2PSigExtensionsEnabled() {
-		s.notaryFeer = NewNotaryFeer(chain)
-		s.notaryRequestPool = mempool.New(s.config.P2PNotaryRequestPayloadPoolSize, 1, true)
-		chain.RegisterPostBlock(func(isRelevant func(*transaction.Transaction, *mempool.Pool, bool) bool, txpool *mempool.Pool, _ *block.Block) {
-			s.notaryRequestPool.RemoveStale(func(t *transaction.Transaction) bool {
-				return isRelevant(t, txpool, true)
-			}, s.notaryFeer)
-		})
 	}
 	s.bQueue = newBlockQueue(maxBlockBatch, chain, log, func(b *block.Block) {
 		s.tryStartServices()
 	})
-
-	s.bSyncQueue = newBlockQueue(maxBlockBatch, s.stateSync, log, nil)
-
 	if s.MinPeers < 0 {
 		s.log.Info("bad MinPeers configured, using the default value",
 			zap.Int("configured", s.MinPeers),
@@ -245,7 +215,6 @@ func (s *Server) Start(errChan chan error) {
 	go s.broadcastTxLoop()
 	go s.relayBlocksLoop()
 	go s.bQueue.run()
-	go s.bSyncQueue.run()
 	go s.transport.Accept()
 	setServerAndNodeVersions(s.UserAgent, strconv.FormatUint(uint64(s.id), 10))
 	s.run()
@@ -260,37 +229,28 @@ func (s *Server) Shutdown() {
 		p.Disconnect(errServerShutdown)
 	}
 	s.bQueue.discard()
-	s.bSyncQueue.discard()
 	for _, svc := range s.services {
 		svc.Shutdown()
-	}
-	if s.chain.P2PSigExtensionsEnabled() {
-		s.notaryRequestPool.StopSubscriptions()
 	}
 	close(s.quit)
 }
 
 // AddService allows to add a service to be started/stopped by Server.
 func (s *Server) AddService(svc Service) {
-	s.services[svc.Name()] = svc
+	s.services = append(s.services, svc)
 }
 
-// AddExtensibleService register a service that handles an extensible payload of some kind.
+// AddExtensibleService register a service that handles extensible payload of some kind.
 func (s *Server) AddExtensibleService(svc Service, category string, handler func(*payload.Extensible) error) {
 	s.extensHandlers[category] = handler
 	s.AddService(svc)
 }
 
-// AddExtensibleHPService registers a high-priority service that handles an extensible payload of some kind.
+// AddExtensibleHPService registers a high-priority service that handles extensible payload of some kind.
 func (s *Server) AddExtensibleHPService(svc Service, category string, handler func(*payload.Extensible) error, txCallback func(*transaction.Transaction)) {
 	s.txCallback = txCallback
 	s.extensHighPrio = category
 	s.AddExtensibleService(svc, category, handler)
-}
-
-// GetNotaryPool allows to retrieve notary pool, if it's configured.
-func (s *Server) GetNotaryPool() *mempool.Pool {
-	return s.notaryRequestPool
 }
 
 // UnconnectedPeers returns a list of peers that are in the discovery peer list
@@ -299,7 +259,7 @@ func (s *Server) UnconnectedPeers() []string {
 	return s.discovery.UnconnectedPeers()
 }
 
-// BadPeers returns a list of peers that are flagged as "bad" peers.
+// BadPeers returns a list of peers the are flagged as "bad" peers.
 func (s *Server) BadPeers() []string {
 	return s.discovery.BadPeers()
 }
@@ -423,40 +383,13 @@ func (s *Server) tryStartServices() {
 
 	if s.IsInSync() && s.syncReached.CAS(false, true) {
 		s.log.Info("node reached synchronized state, starting services")
-		if s.chain.P2PSigExtensionsEnabled() {
-			s.notaryRequestPool.RunSubscriptions() // WSClient is also a subscriber.
-		}
 		for _, svc := range s.services {
 			svc.Start()
 		}
 	}
 }
 
-// SubscribeForNotaryRequests adds the given channel to a notary request event
-// broadcasting, so when a new P2PNotaryRequest is received or an existing
-// P2PNotaryRequest is removed from the pool you'll receive it via this channel.
-// Make sure it's read from regularly as not reading these events might affect
-// other Server functions.
-// Ensure that P2PSigExtensions are enabled before calling this method.
-func (s *Server) SubscribeForNotaryRequests(ch chan<- mempoolevent.Event) {
-	if !s.chain.P2PSigExtensionsEnabled() {
-		panic("P2PSigExtensions are disabled")
-	}
-	s.notaryRequestPool.SubscribeForTransactions(ch)
-}
-
-// UnsubscribeFromNotaryRequests unsubscribes the given channel from notary request
-// notifications, you can close it afterwards. Passing non-subscribed channel
-// is a no-op.
-// Ensure that P2PSigExtensions are enabled before calling this method.
-func (s *Server) UnsubscribeFromNotaryRequests(ch chan<- mempoolevent.Event) {
-	if !s.chain.P2PSigExtensionsEnabled() {
-		panic("P2PSigExtensions are disabled")
-	}
-	s.notaryRequestPool.UnsubscribeFromTransactions(ch)
-}
-
-// getPeers returns the current list of the peers connected to the server filtered by
+// getPeers returns current list of peers connected to the server filtered by
 // isOK function if it's given.
 func (s *Server) getPeers(isOK func(Peer) bool) []Peer {
 	s.lock.RLock()
@@ -473,14 +406,14 @@ func (s *Server) getPeers(isOK func(Peer) bool) []Peer {
 	return peers
 }
 
-// PeerCount returns the number of the currently connected peers.
+// PeerCount returns the number of current connected peers.
 func (s *Server) PeerCount() int {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	return len(s.peers)
 }
 
-// HandshakedPeersCount returns the number of the connected peers
+// HandshakedPeersCount returns the number of connected peers
 // which have already performed handshake.
 func (s *Server) HandshakedPeersCount() int {
 	s.lock.RLock()
@@ -497,7 +430,7 @@ func (s *Server) HandshakedPeersCount() int {
 	return count
 }
 
-// getVersionMsg returns the current version message.
+// getVersionMsg returns current version message.
 func (s *Server) getVersionMsg() (*Message, error) {
 	port, err := s.Port()
 	if err != nil {
@@ -521,7 +454,7 @@ func (s *Server) getVersionMsg() (*Message, error) {
 		})
 	}
 	payload := payload.NewVersion(
-		s.Net,
+		s.ChainID,
 		s.id,
 		s.UserAgent,
 		capabilities,
@@ -532,17 +465,13 @@ func (s *Server) getVersionMsg() (*Message, error) {
 // IsInSync answers the question of whether the server is in sync with the
 // network or not (at least how the server itself sees it). The server operates
 // with the data that it has, the number of peers (that has to be more than
-// minimum number) and the height of these peers (our chain has to be not lower
-// than 2/3 of our peers have). Ideally, we would check for the highest of the
+// minimum number) and height of these peers (our chain has to be not lower
+// than 2/3 of our peers have). Ideally we would check for the highest of the
 // peers, but the problem is that they can lie to us and send whatever height
 // they want to.
 func (s *Server) IsInSync() bool {
 	var peersNumber int
 	var notHigher int
-
-	if s.stateSync.IsActive() {
-		return false
-	}
 
 	if s.MinPeers == 0 {
 		return true
@@ -566,7 +495,7 @@ func (s *Server) IsInSync() bool {
 	return peersNumber >= s.MinPeers && (3*notHigher > 2*peersNumber) // && s.bQueue.length() == 0
 }
 
-// When a peer sends out its version, we reply with verack after validating
+// When a peer sends out his version we reply with verack after validating
 // the version.
 func (s *Server) handleVersionCmd(p Peer, version *payload.Version) error {
 	err := p.HandleVersion(version)
@@ -576,9 +505,9 @@ func (s *Server) handleVersionCmd(p Peer, version *payload.Version) error {
 	if s.id == version.Nonce {
 		return errIdenticalID
 	}
-	// Make sure both the server and the peer are operating on
+	// Make sure both server and peer are operating on
 	// the same network.
-	if s.Net != version.Magic {
+	if s.ChainID != version.ChainID {
 		return errInvalidNetwork
 	}
 	peerAddr := p.PeerAddr().String()
@@ -599,15 +528,12 @@ func (s *Server) handleVersionCmd(p Peer, version *payload.Version) error {
 	return p.SendVersionAck(NewMessage(CMDVerack, payload.NewNullPayload()))
 }
 
-// handleBlockCmd processes the block received from its peer.
+// handleBlockCmd processes the received block received from its peer.
 func (s *Server) handleBlockCmd(p Peer, block *block.Block) error {
-	if s.stateSync.IsActive() {
-		return s.bSyncQueue.putBlock(block)
-	}
 	return s.bQueue.putBlock(block)
 }
 
-// handlePing processes a ping request.
+// handlePing processes ping request.
 func (s *Server) handlePing(p Peer, ping *payload.Ping) error {
 	err := p.HandlePing(ping)
 	if err != nil {
@@ -621,29 +547,16 @@ func (s *Server) handlePing(p Peer, ping *payload.Ping) error {
 }
 
 func (s *Server) requestBlocksOrHeaders(p Peer) error {
-	if s.stateSync.NeedHeaders() {
-		if s.chain.HeaderHeight() < p.LastBlockIndex() {
-			return s.requestHeaders(p)
-		}
-		return nil
+	if s.chain.HeaderHeight() < p.LastBlockIndex() {
+		return s.requestHeaders(p)
 	}
-	var (
-		bq              Blockqueuer = s.chain
-		requestMPTNodes bool
-	)
-	if s.stateSync.IsActive() {
-		bq = s.stateSync
-		requestMPTNodes = s.stateSync.NeedMPTNodes()
-	}
+	bq := s.chain
 	if bq.BlockHeight() >= p.LastBlockIndex() {
 		return nil
 	}
 	err := s.requestBlocks(bq, p)
 	if err != nil {
 		return err
-	}
-	if requestMPTNodes {
-		return s.requestMPTNodes(p, s.stateSync.GetUnknownMPTNodesBatch(payload.MaxMPTHashesCount))
 	}
 	return nil
 }
@@ -654,7 +567,7 @@ func (s *Server) requestHeaders(p Peer) error {
 	return p.EnqueueP2PMessage(NewMessage(CMDGetHeaders, pl))
 }
 
-// handlePing processes a pong request.
+// handlePing processes pong request.
 func (s *Server) handlePong(p Peer, pong *payload.Ping) error {
 	err := p.HandlePong(pong)
 	if err != nil {
@@ -665,16 +578,13 @@ func (s *Server) handlePong(p Peer, pong *payload.Ping) error {
 
 // handleInvCmd processes the received inventory.
 func (s *Server) handleInvCmd(p Peer, inv *payload.Inventory) error {
-	reqHashes := make([]util.Uint256, 0)
-	var typExists = map[payload.InventoryType]func(util.Uint256) bool{
+	reqHashes := make([]common.Hash, 0)
+	var typExists = map[payload.InventoryType]func(common.Hash) bool{
 		payload.TXType:    s.mempool.ContainsKey,
 		payload.BlockType: s.chain.HasBlock,
-		payload.ExtensibleType: func(h util.Uint256) bool {
+		payload.ExtensibleType: func(h common.Hash) bool {
 			cp := s.extensiblePool.Get(h)
 			return cp != nil
-		},
-		payload.P2PNotaryRequestType: func(h util.Uint256) bool {
-			return s.notaryRequestPool.ContainsKey(h)
 		},
 	}
 	if exists := typExists[inv.Type]; exists != nil {
@@ -701,7 +611,7 @@ func (s *Server) handleInvCmd(p Peer, inv *payload.Inventory) error {
 // handleMempoolCmd handles getmempool command.
 func (s *Server) handleMempoolCmd(p Peer) error {
 	txs := s.mempool.GetVerifiedTransactions()
-	hs := make([]util.Uint256, 0, payload.MaxHashesCount)
+	hs := make([]common.Hash, 0, payload.MaxHashesCount)
 	for i := range txs {
 		hs = append(hs, txs[i].Hash())
 		if len(hs) < payload.MaxHashesCount && i != len(txs)-1 {
@@ -719,7 +629,7 @@ func (s *Server) handleMempoolCmd(p Peer) error {
 
 // handleInvCmd processes the received inventory.
 func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
-	var notFound []util.Uint256
+	var notFound []common.Hash
 	for _, hash := range inv.Hashes {
 		var msg *Message
 
@@ -732,7 +642,7 @@ func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 				notFound = append(notFound, hash)
 			}
 		case payload.BlockType:
-			b, err := s.chain.GetBlock(hash)
+			b, err := s.chain.GetBlock(hash, true)
 			if err == nil {
 				msg = NewMessage(CMDBlock, b)
 			} else {
@@ -741,12 +651,6 @@ func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 		case payload.ExtensibleType:
 			if cp := s.extensiblePool.Get(hash); cp != nil {
 				msg = NewMessage(CMDExtensible, cp)
-			}
-		case payload.P2PNotaryRequestType:
-			if nrp, ok := s.notaryRequestPool.TryGetData(hash); ok { // already have checked P2PSigExtEnabled
-				msg = NewMessage(CMDP2PNotaryRequest, nrp.(*payload.P2PNotaryRequest))
-			} else {
-				notFound = append(notFound, hash)
 			}
 		}
 		if msg != nil {
@@ -769,69 +673,6 @@ func (s *Server) handleGetDataCmd(p Peer, inv *payload.Inventory) error {
 	return nil
 }
 
-// handleGetMPTDataCmd processes the received MPT inventory.
-func (s *Server) handleGetMPTDataCmd(p Peer, inv *payload.MPTInventory) error {
-	if !s.config.P2PStateExchangeExtensions {
-		return errors.New("GetMPTDataCMD was received, but P2PStateExchangeExtensions are disabled")
-	}
-	if s.config.KeepOnlyLatestState {
-		// TODO: implement keeping MPT states for P1 and P2 height (#2095, #2152 related)
-		return errors.New("GetMPTDataCMD was received, but only latest MPT state is supported")
-	}
-	resp := payload.MPTData{}
-	capLeft := payload.MaxSize - 8 // max(io.GetVarSize(len(resp.Nodes)))
-	added := make(map[util.Uint256]struct{})
-	for _, h := range inv.Hashes {
-		if capLeft <= 2 { // at least 1 byte for len(nodeBytes) and 1 byte for node type
-			break
-		}
-		err := s.stateSync.Traverse(h,
-			func(n mpt.Node, node []byte) bool {
-				if _, ok := added[n.Hash()]; ok {
-					return false
-				}
-				l := len(node)
-				size := l + io.GetVarSize(l)
-				if size > capLeft {
-					return true
-				}
-				resp.Nodes = append(resp.Nodes, node)
-				added[n.Hash()] = struct{}{}
-				capLeft -= size
-				return false
-			})
-		if err != nil {
-			return fmt.Errorf("failed to traverse MPT starting from %s: %w", h.StringBE(), err)
-		}
-	}
-	if len(resp.Nodes) > 0 {
-		msg := NewMessage(CMDMPTData, &resp)
-		return p.EnqueueP2PMessage(msg)
-	}
-	return nil
-}
-
-func (s *Server) handleMPTDataCmd(p Peer, data *payload.MPTData) error {
-	if !s.config.P2PStateExchangeExtensions {
-		return errors.New("MPTDataCMD was received, but P2PStateExchangeExtensions are disabled")
-	}
-	return s.stateSync.AddMPTNodes(data.Nodes)
-}
-
-// requestMPTNodes requests the specified MPT nodes from the peer or broadcasts
-// request if no peer is specified.
-func (s *Server) requestMPTNodes(p Peer, itms []util.Uint256) error {
-	if len(itms) == 0 {
-		return nil
-	}
-	if len(itms) > payload.MaxMPTHashesCount {
-		itms = itms[:payload.MaxMPTHashesCount]
-	}
-	pl := payload.NewMPTInventory(itms)
-	msg := NewMessage(CMDGetMPTData, pl)
-	return p.EnqueueP2PMessage(msg)
-}
-
 // handleGetBlocksCmd processes the getblocks request.
 func (s *Server) handleGetBlocksCmd(p Peer, gb *payload.GetBlocks) error {
 	count := gb.Count
@@ -842,10 +683,10 @@ func (s *Server) handleGetBlocksCmd(p Peer, gb *payload.GetBlocks) error {
 	if err != nil {
 		return err
 	}
-	blockHashes := make([]util.Uint256, 0)
+	blockHashes := make([]common.Hash, 0)
 	for i := start.Index + 1; i <= start.Index+uint32(count); i++ {
 		hash := s.chain.GetHeaderHash(int(i))
-		if hash.Equals(util.Uint256{}) {
+		if hash == (common.Hash{}) {
 			break
 		}
 		blockHashes = append(blockHashes, hash)
@@ -867,10 +708,10 @@ func (s *Server) handleGetBlockByIndexCmd(p Peer, gbd *payload.GetBlockByIndex) 
 	}
 	for i := gbd.IndexStart; i < gbd.IndexStart+uint32(count); i++ {
 		hash := s.chain.GetHeaderHash(int(i))
-		if hash.Equals(util.Uint256{}) {
+		if hash == (common.Hash{}) {
 			break
 		}
-		b, err := s.chain.GetBlock(hash)
+		b, err := s.chain.GetBlock(hash, true)
 		if err != nil {
 			break
 		}
@@ -895,7 +736,7 @@ func (s *Server) handleGetHeadersCmd(p Peer, gh *payload.GetBlockByIndex) error 
 	resp.Hdrs = make([]*block.Header, 0, count)
 	for i := gh.IndexStart; i < gh.IndexStart+uint32(count); i++ {
 		hash := s.chain.GetHeaderHash(int(i))
-		if hash.Equals(util.Uint256{}) {
+		if hash == (common.Hash{}) {
 			break
 		}
 		header, err := s.chain.GetHeader(hash)
@@ -913,10 +754,10 @@ func (s *Server) handleGetHeadersCmd(p Peer, gh *payload.GetBlockByIndex) error 
 
 // handleHeadersCmd processes headers payload.
 func (s *Server) handleHeadersCmd(p Peer, h *payload.Headers) error {
-	return s.stateSync.AddHeaders(h.Hdrs...)
+	return s.chain.AddHeaders(h.Hdrs...)
 }
 
-// handleExtensibleCmd processes the received extensible payload.
+// handleExtensibleCmd processes received extensible payload.
 func (s *Server) handleExtensibleCmd(e *payload.Extensible) error {
 	if !s.syncReached.Load() {
 		return nil
@@ -940,7 +781,7 @@ func (s *Server) handleExtensibleCmd(e *payload.Extensible) error {
 }
 
 func (s *Server) advertiseExtensible(e *payload.Extensible) {
-	msg := NewMessage(CMDInv, payload.NewInventory(payload.ExtensibleType, []util.Uint256{e.Hash()}))
+	msg := NewMessage(CMDInv, payload.NewInventory(payload.ExtensibleType, []common.Hash{e.Hash()}))
 	if e.Category == s.extensHighPrio {
 		// It's high priority because it directly affects consensus process,
 		// even though it's just an inv.
@@ -950,7 +791,7 @@ func (s *Server) advertiseExtensible(e *payload.Extensible) {
 	}
 }
 
-// handleTxCmd processes the received transaction.
+// handleTxCmd processes received transaction.
 // It never returns an error.
 func (s *Server) handleTxCmd(tx *transaction.Transaction) error {
 	// It's OK for it to fail for various reasons like tx already existing
@@ -975,57 +816,7 @@ func (s *Server) handleTxCmd(tx *transaction.Transaction) error {
 	return nil
 }
 
-// handleP2PNotaryRequestCmd process the received P2PNotaryRequest payload.
-func (s *Server) handleP2PNotaryRequestCmd(r *payload.P2PNotaryRequest) error {
-	if !s.chain.P2PSigExtensionsEnabled() {
-		return errors.New("P2PNotaryRequestCMD was received, but P2PSignatureExtensions are disabled")
-	}
-	// It's OK for it to fail for various reasons like request already existing
-	// in the pool.
-	_ = s.RelayP2PNotaryRequest(r)
-	return nil
-}
-
-// RelayP2PNotaryRequest adds the given request to the pool and relays. It does not check
-// P2PSigExtensions enabled.
-func (s *Server) RelayP2PNotaryRequest(r *payload.P2PNotaryRequest) error {
-	err := s.verifyAndPoolNotaryRequest(r)
-	if err == nil {
-		s.broadcastP2PNotaryRequestPayload(nil, r)
-	}
-	return err
-}
-
-// verifyAndPoolNotaryRequest verifies NotaryRequest payload and adds it to the payload mempool.
-func (s *Server) verifyAndPoolNotaryRequest(r *payload.P2PNotaryRequest) error {
-	return s.chain.PoolTxWithData(r.FallbackTransaction, r, s.notaryRequestPool, s.notaryFeer, s.verifyNotaryRequest)
-}
-
-// verifyNotaryRequest is a function for state-dependant P2PNotaryRequest payload verification which is executed before ordinary blockchain's verification.
-func (s *Server) verifyNotaryRequest(_ *transaction.Transaction, data interface{}) error {
-	r := data.(*payload.P2PNotaryRequest)
-	payer := r.FallbackTransaction.Signers[1].Account
-	if _, err := s.chain.VerifyWitness(payer, r, &r.Witness, s.chain.GetMaxVerificationGAS()); err != nil {
-		return fmt.Errorf("bad P2PNotaryRequest payload witness: %w", err)
-	}
-	notaryHash := s.chain.GetNotaryContractScriptHash()
-	if r.FallbackTransaction.Sender() != notaryHash {
-		return errors.New("P2PNotary contract should be a sender of the fallback transaction")
-	}
-	depositExpiration := s.chain.GetNotaryDepositExpiration(payer)
-	if r.FallbackTransaction.ValidUntilBlock >= depositExpiration {
-		return fmt.Errorf("fallback transaction is valid after deposit is unlocked: ValidUntilBlock is %d, deposit lock expires at %d", r.FallbackTransaction.ValidUntilBlock, depositExpiration)
-	}
-	return nil
-}
-
-func (s *Server) broadcastP2PNotaryRequestPayload(_ *transaction.Transaction, data interface{}) {
-	r := data.(*payload.P2PNotaryRequest) // we can guarantee that cast is successful
-	msg := NewMessage(CMDInv, payload.NewInventory(payload.P2PNotaryRequestType, []util.Uint256{r.FallbackTransaction.Hash()}))
-	s.broadcastMessage(msg)
-}
-
-// handleAddrCmd will process the received addresses.
+// handleAddrCmd will process received addresses.
 func (s *Server) handleAddrCmd(p Peer, addrs *payload.AddressList) error {
 	if !p.CanProcessAddr() {
 		return errors.New("unexpected addr received")
@@ -1058,15 +849,15 @@ func (s *Server) handleGetAddrCmd(p Peer) error {
 }
 
 // requestBlocks sends a CMDGetBlockByIndex message to the peer
-// to sync up in blocks. A maximum of maxBlockBatch will be
-// sent at once. There are two things we need to take care of:
+// to sync up in blocks. A maximum of maxBlockBatch will
+// send at once. Two things we need to take care of:
 // 1. If possible, blocks should be fetched in parallel.
 //    height..+500 to one peer, height+500..+1000 to another etc.
-// 2. Every block must eventually be fetched even if the peer sends no answer.
-// Thus, the following algorithm is used:
+// 2. Every block must eventually be fetched even if peer sends no answer.
+// Thus the following algorithm is used:
 // 1. Block range is divided into chunks of payload.MaxHashesCount.
 // 2. Send requests for chunk in increasing order.
-// 3. After all requests have been sent, request random height.
+// 3. After all requests were sent, request random height.
 func (s *Server) requestBlocks(bq Blockqueuer, p Peer) error {
 	h := bq.BlockHeight()
 	pl := getRequestBlocksPayload(p, h, &s.lastRequestedBlock)
@@ -1117,7 +908,7 @@ func (s *Server) handleMessage(peer Peer, msg *Message) error {
 
 	if peer.Handshaked() {
 		if inv, ok := msg.Payload.(*payload.Inventory); ok {
-			if !inv.Type.Valid(s.chain.P2PSigExtensionsEnabled()) || len(inv.Hashes) == 0 {
+			if !inv.Type.Valid() || len(inv.Hashes) == 0 {
 				return errInvalidInvType
 			}
 		}
@@ -1137,12 +928,6 @@ func (s *Server) handleMessage(peer Peer, msg *Message) error {
 		case CMDGetData:
 			inv := msg.Payload.(*payload.Inventory)
 			return s.handleGetDataCmd(peer, inv)
-		case CMDGetMPTData:
-			inv := msg.Payload.(*payload.MPTInventory)
-			return s.handleGetMPTDataCmd(peer, inv)
-		case CMDMPTData:
-			inv := msg.Payload.(*payload.MPTData)
-			return s.handleMPTDataCmd(peer, inv)
 		case CMDGetHeaders:
 			gh := msg.Payload.(*payload.GetBlockByIndex)
 			return s.handleGetHeadersCmd(peer, gh)
@@ -1164,9 +949,6 @@ func (s *Server) handleMessage(peer Peer, msg *Message) error {
 		case CMDTX:
 			tx := msg.Payload.(*transaction.Transaction)
 			return s.handleTxCmd(tx)
-		case CMDP2PNotaryRequest:
-			r := msg.Payload.(*payload.P2PNotaryRequest)
-			return s.handleP2PNotaryRequestCmd(r)
 		case CMDPing:
 			ping := msg.Payload.(*payload.Ping)
 			return s.handlePing(peer, ping)
@@ -1198,15 +980,6 @@ func (s *Server) handleMessage(peer Peer, msg *Message) error {
 }
 
 func (s *Server) tryInitStateSync() {
-	if !s.stateSync.IsActive() {
-		s.bSyncQueue.discard()
-		return
-	}
-
-	if s.stateSync.IsInitialized() {
-		return
-	}
-
 	var peersNumber int
 	s.lock.RLock()
 	heights := make([]uint32, 0)
@@ -1225,39 +998,22 @@ func (s *Server) tryInitStateSync() {
 		}
 	}
 	s.lock.RUnlock()
-	if peersNumber >= s.MinPeers && len(heights) > 0 {
-		// choose the height of the median peer as the current chain's height
-		h := heights[len(heights)/2]
-		err := s.stateSync.Init(h)
-		if err != nil {
-			s.log.Fatal("failed to init state sync module",
-				zap.Uint32("evaluated chain's blockHeight", h),
-				zap.Uint32("blockHeight", s.chain.BlockHeight()),
-				zap.Uint32("headerHeight", s.chain.HeaderHeight()),
-				zap.Error(err))
-		}
-
-		// module can be inactive after init (i.e. full state is collected and ordinary block processing is needed)
-		if !s.stateSync.IsActive() {
-			s.bSyncQueue.discard()
-		}
-	}
 }
 
-// BroadcastExtensible add a locally-generated Extensible payload to the pool
+// BroadcastExtensible add locally-generated Extensible payload to the pool
 // and advertises it to peers.
 func (s *Server) BroadcastExtensible(p *payload.Extensible) {
 	_, err := s.extensiblePool.Add(p)
 	if err != nil {
-		s.log.Error("created payload is not valid", zap.Error(err))
+		s.log.Error("created payload is not valid", zap.String("sender", p.Sender.String()), zap.Error(err))
 		return
 	}
 
 	s.advertiseExtensible(p)
 }
 
-// RequestTx asks for the given transactions from Server peers using GetData message.
-func (s *Server) RequestTx(hashes ...util.Uint256) {
+// RequestTx asks for given transactions from Server peers using GetData message.
+func (s *Server) RequestTx(hashes ...common.Hash) {
 	if len(hashes) == 0 {
 		return
 	}
@@ -1278,7 +1034,7 @@ func (s *Server) RequestTx(hashes ...util.Uint256) {
 	}
 }
 
-// iteratePeersWithSendMsg sends the given message to all peers using two functions
+// iteratePeersWithSendMsg sends given message to all peers using two functions
 // passed, one is to send the message and the other is to filtrate peers (the
 // peer is considered invalid if it returns false).
 func (s *Server) iteratePeersWithSendMsg(msg *Message, send func(Peer, bool, []byte) error, peerOK func(Peer) bool) {
@@ -1287,6 +1043,7 @@ func (s *Server) iteratePeersWithSendMsg(msg *Message, send func(Peer, bool, []b
 	// Get a copy of s.peers to avoid holding a lock while sending.
 	peers := s.getPeers(peerOK)
 	peerN = len(peers)
+
 	if peerN == 0 {
 		return
 	}
@@ -1350,7 +1107,7 @@ func (s *Server) relayBlocksLoop() {
 			s.chain.UnsubscribeFromBlocks(ch)
 			return
 		case b := <-ch:
-			msg := NewMessage(CMDInv, payload.NewInventory(payload.BlockType, []util.Uint256{b.Hash()}))
+			msg := NewMessage(CMDInv, payload.NewInventory(payload.BlockType, []common.Hash{b.Hash()}))
 			// Filter out nodes that are more current (avoid spamming the network
 			// during initial sync).
 			s.iteratePeersWithSendMsg(msg, Peer.EnqueuePacket, func(p Peer) bool {
@@ -1366,8 +1123,6 @@ func (s *Server) verifyAndPoolTX(t *transaction.Transaction) error {
 	return s.chain.PoolTx(t)
 }
 
-// RelayTxn a new transaction to the local node and the connected peers.
-// Reference: the method OnRelay in C#: https://github.com/neo-project/neo/blob/master/neo/Network/P2P/LocalNode.cs#L159
 func (s *Server) RelayTxn(t *transaction.Transaction) error {
 	err := s.verifyAndPoolTX(t)
 	if err == nil {
@@ -1384,7 +1139,7 @@ func (s *Server) broadcastTX(t *transaction.Transaction, _ interface{}) {
 	}
 }
 
-func (s *Server) broadcastTxHashes(hs []util.Uint256) {
+func (s *Server) broadcastTxHashes(hs []common.Hash) {
 	msg := NewMessage(CMDInv, payload.NewInventory(payload.TXType, hs))
 
 	// We need to filter out non-relaying nodes, so plain broadcast
@@ -1402,9 +1157,6 @@ func (s *Server) initStaleMemPools() {
 	}
 
 	s.mempool.SetResendThreshold(uint32(threshold), s.broadcastTX)
-	if s.chain.P2PSigExtensionsEnabled() {
-		s.notaryRequestPool.SetResendThreshold(uint32(threshold), s.broadcastP2PNotaryRequestPayload)
-	}
 }
 
 // broadcastTxLoop is a loop for batching and sending
@@ -1415,7 +1167,7 @@ func (s *Server) broadcastTxLoop() {
 		batchSize = 32
 	)
 
-	txs := make([]util.Uint256, 0, batchSize)
+	txs := make([]common.Hash, 0, batchSize)
 	var timer *time.Timer
 
 	timerCh := func() <-chan time.Time {
@@ -1463,7 +1215,7 @@ func (s *Server) broadcastTxLoop() {
 }
 
 // Port returns a server port that should be used in P2P version exchange. In
-// case `AnnouncedPort` is set in the server.Config, the announced node port
+// case if `AnnouncedPort` is set in the server.Config, the announced node port
 // will be returned (e.g. consider the node running behind NAT). If `AnnouncedPort`
 // isn't set, the port returned may still differs from that of server.Config.
 func (s *Server) Port() (uint16, error) {

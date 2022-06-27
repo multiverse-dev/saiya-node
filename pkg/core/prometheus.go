@@ -11,7 +11,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Current index of processed block",
 			Name:      "current_block_height",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 	//persistedHeight prometheus metric.
@@ -19,7 +19,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Current persisted block count",
 			Name:      "current_persisted_height",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 	//headerHeight prometheus metric.
@@ -27,7 +27,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Current header height",
 			Name:      "current_header_height",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 )

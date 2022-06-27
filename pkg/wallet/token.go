@@ -1,21 +1,21 @@
 package wallet
 
 import (
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/encoding/address"
 )
 
-// Token represents an imported token contract.
+// Token represents imported token contract.
 type Token struct {
 	Name     string       `json:"name"`
-	Hash     util.Uint160 `json:"script_hash"`
+	Hash     common.Address `json:"script_hash"`
 	Decimals int64        `json:"decimals"`
 	Symbol   string       `json:"symbol"`
 	Standard string       `json:"standard"`
 }
 
-// NewToken returns the new token contract info.
-func NewToken(tokenHash util.Uint160, name, symbol string, decimals int64, standardName string) *Token {
+// NewToken returns new token contract info.
+func NewToken(tokenHash common.Address, name, symbol string, decimals int64, standardName string) *Token {
 	return &Token{
 		Name:     name,
 		Hash:     tokenHash,
@@ -27,5 +27,5 @@ func NewToken(tokenHash util.Uint160, name, symbol string, decimals int64, stand
 
 // Address returns token address from hash.
 func (t *Token) Address() string {
-	return address.Uint160ToString(t.Hash)
+	return address.AddressToBase58(t.Hash)
 }

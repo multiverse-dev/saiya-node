@@ -1,8 +1,8 @@
 package consensus
 
 import (
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/dbft/payload"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // commit represents dBFT Commit message.
@@ -11,25 +11,25 @@ type commit struct {
 }
 
 // signatureSize is an rfc6989 signature size in bytes
-// without a leading byte (0x04, uncompressed).
+// without leading byte (0x04, uncompressed).
 const signatureSize = 64
 
 var _ payload.Commit = (*commit)(nil)
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (c *commit) EncodeBinary(w *io.BinWriter) {
 	w.WriteBytes(c.signature[:])
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (c *commit) DecodeBinary(r *io.BinReader) {
 	r.ReadBytes(c.signature[:])
 }
 
-// Signature implements the payload.Commit interface.
+// Signature implements payload.Commit interface.
 func (c commit) Signature() []byte { return c.signature[:] }
 
-// SetSignature implements the payload.Commit interface.
+// SetSignature implements payload.Commit interface.
 func (c *commit) SetSignature(signature []byte) {
 	copy(c.signature[:], signature)
 }

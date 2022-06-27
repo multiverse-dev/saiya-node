@@ -8,15 +8,15 @@ import (
 	"errors"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/client"
+	"github.com/multiverse-dev/saiya/pkg/config/netmode"
+	"github.com/multiverse-dev/saiya/pkg/rpc/client"
 	"github.com/urfave/cli"
 )
 
 // DefaultTimeout is the default timeout used for RPC requests.
-const DefaultTimeout = 10 * time.Second
+const DefaultTimeout = 30 * time.Second
 
-// RPCEndpointFlag is a long flag name for an RPC endpoint. It can be used to
+// RPCEndpointFlag is a long flag name for RPC endpoint. It can be used to
 // check for flag presence in the context.
 const RPCEndpointFlag = "rpc-endpoint"
 
@@ -37,8 +37,7 @@ var RPC = []cli.Flag{
 	},
 	cli.DurationFlag{
 		Name:  "timeout, s",
-		Value: DefaultTimeout,
-		Usage: "Timeout for the operation",
+		Usage: "Timeout for the operation (10 seconds by default)",
 	},
 }
 
@@ -46,7 +45,7 @@ var errNoEndpoint = errors.New("no RPC endpoint specified, use option '--" + RPC
 
 // GetNetwork examines Context's flags and returns the appropriate network. It
 // defaults to PrivNet if no flags are given.
-func GetNetwork(ctx *cli.Context) netmode.Magic {
+func GetNetwork(ctx *cli.Context) uint64 {
 	var net = netmode.PrivNet
 	if ctx.Bool("testnet") {
 		net = netmode.TestNet
@@ -54,13 +53,10 @@ func GetNetwork(ctx *cli.Context) netmode.Magic {
 	if ctx.Bool("mainnet") {
 		net = netmode.MainNet
 	}
-	if ctx.Bool("unittest") {
-		net = netmode.UnitTestNet
-	}
 	return net
 }
 
-// GetTimeoutContext returns a context.Context with the default or a user-set timeout.
+// GetTimeoutContext returns a context.Context with default of user-set timeout.
 func GetTimeoutContext(ctx *cli.Context) (context.Context, func()) {
 	dur := ctx.Duration("timeout")
 	if dur == 0 {
@@ -75,7 +71,10 @@ func GetRPCClient(gctx context.Context, ctx *cli.Context) (*client.Client, cli.E
 	if len(endpoint) == 0 {
 		return nil, cli.NewExitError(errNoEndpoint, 1)
 	}
-	c, err := client.New(gctx, endpoint, client.Options{})
+	c, err := client.New(gctx, endpoint, client.Options{
+		DialTimeout:    time.Minute,
+		RequestTimeout: time.Minute,
+	})
 	if err != nil {
 		return nil, cli.NewExitError(err, 1)
 	}

@@ -3,20 +3,20 @@ package payload
 import (
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // MerkleBlock represents a merkle block packet payload.
 type MerkleBlock struct {
 	*block.Header
 	TxCount int
-	Hashes  []util.Uint256
+	Hashes  []common.Hash
 	Flags   []byte
 }
 
-// DecodeBinary implements the Serializable interface.
+// DecodeBinary implements Serializable interface.
 func (m *MerkleBlock) DecodeBinary(br *io.BinReader) {
 	m.Header = &block.Header{}
 	m.Header.DecodeBinary(br)
@@ -27,18 +27,26 @@ func (m *MerkleBlock) DecodeBinary(br *io.BinReader) {
 		return
 	}
 	m.TxCount = txCount
-	br.ReadArray(&m.Hashes, m.TxCount)
-	if txCount != len(m.Hashes) {
+	count := br.ReadVarUint()
+	if uint64(txCount) != count {
 		br.Err = errors.New("invalid tx count")
+		return
+	}
+	m.Hashes = make([]common.Hash, count)
+	for i := uint64(0); i < count; i++ {
+		br.ReadBytes(m.Hashes[i][:])
 	}
 	m.Flags = br.ReadVarBytes((txCount + 7) / 8)
 }
 
-// EncodeBinary implements the Serializable interface.
+// EncodeBinary implements Serializable interface.
 func (m *MerkleBlock) EncodeBinary(bw *io.BinWriter) {
 	m.Header.EncodeBinary(bw)
 
 	bw.WriteVarUint(uint64(m.TxCount))
-	bw.WriteArray(m.Hashes)
+	bw.WriteVarUint(uint64(len(m.Hashes)))
+	for _, hash := range m.Hashes {
+		bw.WriteBytes(hash[:])
+	}
 	bw.WriteVarBytes(m.Flags)
 }

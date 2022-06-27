@@ -2,64 +2,53 @@ package request
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 )
 
 type (
 	// Param represents a param either passed to
-	// the server or to be sent to a server using
+	// the server or to send to a server using
 	// the client.
 	Param struct {
 		json.RawMessage
 		cache interface{}
 	}
 
-	// FuncParam represents a function argument parameter used in the
-	// invokefunction RPC method.
-	FuncParam struct {
-		Type  smartcontract.ParamType `json:"type"`
-		Value Param                   `json:"value"`
-	}
-	// BlockFilter is a wrapper structure for the block event filter. The only
+	// BlockFilter is a wrapper structure for block event filter. The only
 	// allowed filter is primary index.
 	BlockFilter struct {
 		Primary int `json:"primary"`
 	}
-	// TxFilter is a wrapper structure for the transaction event filter. It
+	// TxFilter is a wrapper structure for transaction event filter. It
 	// allows to filter transactions by senders and signers.
 	TxFilter struct {
-		Sender *util.Uint160 `json:"sender,omitempty"`
-		Signer *util.Uint160 `json:"signer,omitempty"`
+		Sender *common.Address `json:"sender,omitempty"`
+		Signer *common.Address `json:"signer,omitempty"`
 	}
-	// NotificationFilter is a wrapper structure representing a filter used for
+
+	// NotificationFilter is a wrapper structure representing filter used for
 	// notifications generated during transaction execution. Notifications can
 	// be filtered by contract hash and by name.
 	NotificationFilter struct {
-		Contract *util.Uint160 `json:"contract,omitempty"`
-		Name     *string       `json:"name,omitempty"`
+		Contract *common.Address `json:"contract,omitempty"`
 	}
 	// ExecutionFilter is a wrapper structure used for transaction execution
 	// events. It allows to choose failing or successful transactions based
 	// on their VM state.
 	ExecutionFilter struct {
-		State string `json:"state"`
+		State uint64 `json:"state"`
 	}
 	// SignerWithWitness represents transaction's signer with the corresponding witness.
 	SignerWithWitness struct {
-		transaction.Signer
+		Signer common.Address
 		transaction.Witness
 	}
 )
@@ -76,11 +65,10 @@ var (
 )
 
 func (p Param) String() string {
-	str, _ := p.GetString()
-	return str
+	return string(p.RawMessage)
 }
 
-// GetStringStrict returns a string value of the parameter.
+// GetStringStrict returns string value of the parameter.
 func (p *Param) GetStringStrict() (string, error) {
 	if p == nil {
 		return "", errMissingParameter
@@ -102,7 +90,7 @@ func (p *Param) GetStringStrict() (string, error) {
 	return "", errNotAString
 }
 
-// GetString returns a string value of the parameter or tries to cast the parameter to a string value.
+// GetString returns string value of the parameter or tries to cast parameter to a string value.
 func (p *Param) GetString() (string, error) {
 	if p == nil {
 		return "", errMissingParameter
@@ -162,7 +150,7 @@ func (p *Param) GetBooleanStrict() (bool, error) {
 	return false, errNotABool
 }
 
-// GetBoolean returns a boolean value of the parameter or tries to cast the parameter to a bool value.
+// GetBoolean returns boolean value of the parameter or tries to cast parameter to a bool value.
 func (p *Param) GetBoolean() (bool, error) {
 	if p == nil {
 		return false, errMissingParameter
@@ -203,7 +191,7 @@ func (p *Param) GetBoolean() (bool, error) {
 	}
 }
 
-// GetIntStrict returns an int value of the parameter if the parameter is an integer.
+// GetIntStrict returns int value of the parameter if the parameter is integer.
 func (p *Param) GetIntStrict() (int, error) {
 	if p == nil {
 		return 0, errMissingParameter
@@ -251,7 +239,7 @@ func (p *Param) fillIntCache() (interface{}, error) {
 	return nil, errNotAnInt
 }
 
-// GetInt returns an int value of the parameter or tries to cast the parameter to an int value.
+// GetInt returns int value of the parameter or tries to cast parameter to an int value.
 func (p *Param) GetInt() (int, error) {
 	if p == nil {
 		return 0, errMissingParameter
@@ -281,7 +269,7 @@ func (p *Param) GetInt() (int, error) {
 	}
 }
 
-// GetBigInt returns a big-integer value of the parameter.
+// GetBigInt returns big-interer value of the parameter.
 func (p *Param) GetBigInt() (*big.Int, error) {
 	if p == nil {
 		return nil, errMissingParameter
@@ -334,173 +322,36 @@ func (p *Param) GetArray() ([]Param, error) {
 	return nil, errNotAnArray
 }
 
-// GetUint256 returns a Uint256 value of the parameter.
-func (p *Param) GetUint256() (util.Uint256, error) {
+// GetUint256 returns Uint256 value of the parameter.
+func (p *Param) GetHash() (common.Hash, error) {
 	s, err := p.GetString()
 	if err != nil {
-		return util.Uint256{}, err
+		return common.Hash{}, err
 	}
-
-	return util.Uint256DecodeStringLE(strings.TrimPrefix(s, "0x"))
+	return common.HexToHash(s), nil
 }
 
-// GetUint160FromHex returns a Uint160 value of the parameter encoded in hex.
-func (p *Param) GetUint160FromHex() (util.Uint160, error) {
+// GetUint160FromHex returns Uint160 value of the parameter encoded in hex.
+func (p *Param) GetAddressFromHex() (common.Address, error) {
 	s, err := p.GetString()
 	if err != nil {
-		return util.Uint160{}, err
+		return common.Address{}, err
 	}
-
-	return util.Uint160DecodeStringLE(strings.TrimPrefix(s, "0x"))
+	return common.HexToAddress(s), nil
 }
 
-// GetUint160FromAddress returns a Uint160 value of the parameter that was
-// supplied as an address.
-func (p *Param) GetUint160FromAddress() (util.Uint160, error) {
-	s, err := p.GetString()
-	if err != nil {
-		return util.Uint160{}, err
-	}
-
-	return address.StringToUint160(s)
-}
-
-// GetUint160FromAddressOrHex returns a Uint160 value of the parameter that was
-// supplied either as raw hex or as an address.
-func (p *Param) GetUint160FromAddressOrHex() (util.Uint160, error) {
-	u, err := p.GetUint160FromHex()
-	if err == nil {
-		return u, err
-	}
-	return p.GetUint160FromAddress()
-}
-
-// GetFuncParam returns the current parameter as a function call parameter.
-func (p *Param) GetFuncParam() (FuncParam, error) {
-	if p == nil {
-		return FuncParam{}, errMissingParameter
-	}
-	// This one doesn't need to be cached, it's used only once.
-	fp := FuncParam{}
-	err := json.Unmarshal(p.RawMessage, &fp)
-	return fp, err
-}
-
-// GetBytesHex returns a []byte value of the parameter if
+// GetBytesHex returns []byte value of the parameter if
 // it is a hex-encoded string.
 func (p *Param) GetBytesHex() ([]byte, error) {
 	s, err := p.GetString()
 	if err != nil {
 		return nil, err
 	}
-
+	s = strings.TrimPrefix(s, "0x")
 	return hex.DecodeString(s)
 }
 
-// GetBytesBase64 returns a []byte value of the parameter if
-// it is a base64-encoded string.
-func (p *Param) GetBytesBase64() ([]byte, error) {
-	s, err := p.GetString()
-	if err != nil {
-		return nil, err
-	}
-
-	return base64.StdEncoding.DecodeString(s)
-}
-
-// GetSignerWithWitness returns a SignerWithWitness value of the parameter.
-func (p *Param) GetSignerWithWitness() (SignerWithWitness, error) {
-	// This one doesn't need to be cached, it's used only once.
-	aux := new(signerWithWitnessAux)
-	err := json.Unmarshal(p.RawMessage, aux)
-	if err != nil {
-		return SignerWithWitness{}, fmt.Errorf("not a signer: %w", err)
-	}
-	acc, err := util.Uint160DecodeStringLE(strings.TrimPrefix(aux.Account, "0x"))
-	if err != nil {
-		acc, err = address.StringToUint160(aux.Account)
-	}
-	if err != nil {
-		return SignerWithWitness{}, fmt.Errorf("not a signer: %w", err)
-	}
-	c := SignerWithWitness{
-		Signer: transaction.Signer{
-			Account:          acc,
-			Scopes:           aux.Scopes,
-			AllowedContracts: aux.AllowedContracts,
-			AllowedGroups:    aux.AllowedGroups,
-			Rules:            aux.Rules,
-		},
-		Witness: transaction.Witness{
-			InvocationScript:   aux.InvocationScript,
-			VerificationScript: aux.VerificationScript,
-		},
-	}
-	return c, nil
-}
-
-// GetSignersWithWitnesses returns a slice of SignerWithWitness with CalledByEntry
-// scope from an array of Uint160 or an array of serialized transaction.Signer stored
-// in the parameter.
-func (p Param) GetSignersWithWitnesses() ([]transaction.Signer, []transaction.Witness, error) {
-	hashes, err := p.GetArray()
-	if err != nil {
-		return nil, nil, err
-	}
-	signers := make([]transaction.Signer, len(hashes))
-	witnesses := make([]transaction.Witness, len(hashes))
-	// try to extract hashes first
-	for i, h := range hashes {
-		var u util.Uint160
-		u, err = h.GetUint160FromHex()
-		if err != nil {
-			break
-		}
-		signers[i] = transaction.Signer{
-			Account: u,
-			Scopes:  transaction.CalledByEntry,
-		}
-	}
-	if err != nil {
-		for i, h := range hashes {
-			signerWithWitness, err := h.GetSignerWithWitness()
-			if err != nil {
-				return nil, nil, err
-			}
-			signers[i] = signerWithWitness.Signer
-			witnesses[i] = signerWithWitness.Witness
-		}
-	}
-	return signers, witnesses, nil
-}
-
-// IsNull returns whether the parameter represents JSON nil value.
+// IsNull returns whether parameter represents JSON nil value.
 func (p *Param) IsNull() bool {
 	return bytes.Equal(p.RawMessage, jsonNullBytes)
-}
-
-// signerWithWitnessAux is an auxiliary struct for JSON marshalling. We need it because of
-// DisallowUnknownFields JSON marshaller setting.
-type signerWithWitnessAux struct {
-	Account            string                    `json:"account"`
-	Scopes             transaction.WitnessScope  `json:"scopes"`
-	AllowedContracts   []util.Uint160            `json:"allowedcontracts,omitempty"`
-	AllowedGroups      []*keys.PublicKey         `json:"allowedgroups,omitempty"`
-	Rules              []transaction.WitnessRule `json:"rules,omitempty"`
-	InvocationScript   []byte                    `json:"invocation,omitempty"`
-	VerificationScript []byte                    `json:"verification,omitempty"`
-}
-
-// MarshalJSON implements the json.Marshaler interface.
-func (s *SignerWithWitness) MarshalJSON() ([]byte, error) {
-	signer := &signerWithWitnessAux{
-		Account:            s.Account.StringLE(),
-		Scopes:             s.Scopes,
-		AllowedContracts:   s.AllowedContracts,
-		AllowedGroups:      s.AllowedGroups,
-		Rules:              s.Rules,
-		InvocationScript:   s.InvocationScript,
-		VerificationScript: s.VerificationScript,
-	}
-	return json.Marshal(signer)
 }

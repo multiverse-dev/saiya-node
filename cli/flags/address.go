@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/urfave/cli"
 )
 
-// Address is a wrapper for a Uint160 with flag.Value methods.
+// Address is a wrapper for Uint160 with flag.Value methods.
 type Address struct {
 	IsSet bool
-	Value util.Uint160
+	Value common.Address
 }
 
 // AddressFlag is a flag with type string.
@@ -28,12 +27,12 @@ var (
 	_ cli.Flag   = AddressFlag{}
 )
 
-// String implements the fmt.Stringer interface.
+// String implements fmt.Stringer interface.
 func (a Address) String() string {
-	return address.Uint160ToString(a.Value)
+	return a.Value.String()
 }
 
-// Set implements the flag.Value interface.
+// Set implements flag.Value interface.
 func (a *Address) Set(s string) error {
 	addr, err := ParseAddress(s)
 	if err != nil {
@@ -44,8 +43,8 @@ func (a *Address) Set(s string) error {
 	return nil
 }
 
-// Uint160 casts an address to Uint160.
-func (a *Address) Uint160() (u util.Uint160) {
+// Uint160 casts address to Uint160.
+func (a *Address) Address() (u common.Address) {
 	if !a.IsSet {
 		// It is a programmer error to call this method without
 		// checking if the value was provided.
@@ -82,7 +81,7 @@ func (f AddressFlag) GetName() string {
 	return f.Name
 }
 
-// Apply populates the flag given the flag set and environment.
+// Apply populates the flag given the flag set and environment
 // Ignores errors.
 func (f AddressFlag) Apply(set *flag.FlagSet) {
 	eachName(f.Name, func(name string) {
@@ -90,13 +89,10 @@ func (f AddressFlag) Apply(set *flag.FlagSet) {
 	})
 }
 
-// ParseAddress parses a Uint160 from either an LE string or an address.
-func ParseAddress(s string) (util.Uint160, error) {
-	const uint160size = 2 * util.Uint160Size
-	switch len(s) {
-	case uint160size, uint160size + 2:
-		return util.Uint160DecodeStringLE(strings.TrimPrefix(s, "0x"))
-	default:
-		return address.StringToUint160(s)
+// ParseAddress parses Uint160 form either LE string or address.
+func ParseAddress(s string) (common.Address, error) {
+	if len(s) != 40 && (!strings.HasPrefix(s, "0x") || len(s) != 42) {
+		return common.Address{}, fmt.Errorf("invalid address %s", s)
 	}
+	return common.HexToAddress(s), nil
 }

@@ -1,4 +1,4 @@
 /*
-Package config contains NeoGo node configuration definition.
+Package config contains saiya node configuration definition.
 */
 package config

@@ -3,11 +3,11 @@ package rpcbroadcaster
 import (
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/rpc/request"
+	"github.com/multiverse-dev/saiya/pkg/rpc/request"
 	"go.uber.org/zap"
 )
 
-// RPCBroadcaster represents a generic RPC broadcaster.
+// RPCBroadcaster represent generic RPC broadcaster.
 type RPCBroadcaster struct {
 	Clients   map[string]*RPCClient
 	Log       *zap.Logger
@@ -17,7 +17,7 @@ type RPCBroadcaster struct {
 	sendTimeout time.Duration
 }
 
-// NewRPCBroadcaster returns a new RPC broadcaster instance.
+// NewRPCBroadcaster returns new RPC broadcaster instance.
 func NewRPCBroadcaster(log *zap.Logger, sendTimeout time.Duration) *RPCBroadcaster {
 	return &RPCBroadcaster{
 		Clients:     make(map[string]*RPCClient),

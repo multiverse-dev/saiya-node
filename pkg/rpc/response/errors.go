@@ -1,7 +1,6 @@
 package response
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -18,12 +17,9 @@ type (
 	}
 )
 
-// InternalServerErrorCode is returned for internal RPC server error.
-const InternalServerErrorCode = -32603
-
 var (
 	// ErrInvalidParams represents a generic 'invalid parameters' error.
-	ErrInvalidParams = NewInvalidParamsError("", errors.New("invalid params"))
+	ErrInvalidParams = NewInvalidParamsError("", nil)
 	// ErrAlreadyExists represents SubmitError with code -501.
 	ErrAlreadyExists = NewSubmitError(-501, "Block or transaction already exists and cannot be sent repeatedly.")
 	// ErrOutOfMemory represents SubmitError with code -502.
@@ -77,7 +73,7 @@ func NewInvalidParamsError(data string, cause error) *Error {
 // NewInternalServerError creates a new error with
 // code -32603.
 func NewInternalServerError(data string, cause error) *Error {
-	return NewError(InternalServerErrorCode, http.StatusInternalServerError, "Internal error", data, cause)
+	return NewError(-32603, http.StatusInternalServerError, "Internal error", data, cause)
 }
 
 // NewRPCError creates a new error with
@@ -100,7 +96,7 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s (%d) - %s - %s", e.Message, e.Code, e.Data, e.Cause)
 }
 
-// WrapErrorWithData returns copy of the given error with the specified data and cause.
+// WrapErrorWithData returns copy of the given error with specified data and cause.
 // It does not modify the source error.
 func WrapErrorWithData(e *Error, data error) *Error {
 	return NewError(e.Code, e.HTTPCode, e.Message, data.Error(), data)

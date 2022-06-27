@@ -34,7 +34,7 @@ type AbstractResult interface {
 // that Result field is an interface here.
 type Abstract struct {
 	HeaderAndError
-	Result interface{} `json:"result,omitempty"`
+	Result interface{} `json:"result"`
 }
 
 // RunForErrors implements AbstractResult interface.

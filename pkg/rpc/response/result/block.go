@@ -4,16 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 type (
 	// LedgerAux is a set of methods needed to construct some outputs.
 	LedgerAux interface {
 		BlockHeight() uint32
-		GetHeaderHash(int) util.Uint256
+		GetHeaderHash(int) common.Hash
 	}
 	// Block wrapper used for the representation of
 	// block.Block / block.Base on the RPC Server.
@@ -22,12 +23,12 @@ type (
 		BlockMetadata
 	}
 
-	// BlockMetadata is an additional metadata added to the standard
+	// BlockMetadata is an additional metadata added to standard
 	// block.Block.
 	BlockMetadata struct {
-		Size          int           `json:"size"`
-		NextBlockHash *util.Uint256 `json:"nextblockhash,omitempty"`
-		Confirmations uint32        `json:"confirmations"`
+		Size          hexutil.Uint `json:"size"`
+		NextBlockHash *common.Hash `json:"nextblockhash,omitempty"`
+		Confirmations hexutil.Uint `json:"confirmations"`
 	}
 )
 
@@ -36,20 +37,20 @@ func NewBlock(b *block.Block, chain LedgerAux) Block {
 	res := Block{
 		Block: *b,
 		BlockMetadata: BlockMetadata{
-			Size:          io.GetVarSize(b),
-			Confirmations: chain.BlockHeight() - b.Index + 1,
+			Size:          hexutil.Uint(io.GetVarSize(b)),
+			Confirmations: hexutil.Uint(chain.BlockHeight() - b.Index + 1),
 		},
 	}
 
 	hash := chain.GetHeaderHash(int(b.Index) + 1)
-	if !hash.Equals(util.Uint256{}) {
+	if hash != (common.Hash{}) {
 		res.NextBlockHash = &hash
 	}
 
 	return res
 }
 
-// MarshalJSON implements the json.Marshaler interface.
+// MarshalJSON implements json.Marshaler interface.
 func (b Block) MarshalJSON() ([]byte, error) {
 	output, err := json.Marshal(b.BlockMetadata)
 	if err != nil {
@@ -62,7 +63,7 @@ func (b Block) MarshalJSON() ([]byte, error) {
 
 	// We have to keep both "fields" at the same level in json in order to
 	// match C# API, so there's no way to marshall Block correctly with
-	// the standard json.Marshaller tool.
+	// standard json.Marshaller tool.
 	if output[len(output)-1] != '}' || baseBytes[0] != '{' {
 		return nil, errors.New("can't merge internal jsons")
 	}
@@ -71,7 +72,7 @@ func (b Block) MarshalJSON() ([]byte, error) {
 	return output, nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (b *Block) UnmarshalJSON(data []byte) error {
 	// As block.Block and BlockMetadata are at the same level in json,
 	// do unmarshalling separately for both structs.

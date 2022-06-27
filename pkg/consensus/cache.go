@@ -4,22 +4,22 @@ import (
 	"container/list"
 	"sync"
 
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
 )
 
-// relayCache is payload cache which is used to store
+// relayCache is a payload cache which is used to store
 // last consensus payloads.
 type relayCache struct {
 	*sync.RWMutex
 
 	maxCap int
-	elems  map[util.Uint256]*list.Element
+	elems  map[common.Hash]*list.Element
 	queue  *list.List
 }
 
-// hashable is the type of items which can be stored in the relayCache.
+// hashable is a type of items which can be stored in the relayCache.
 type hashable interface {
-	Hash() util.Uint256
+	Hash() common.Hash
 }
 
 func newFIFOCache(capacity int) *relayCache {
@@ -27,12 +27,12 @@ func newFIFOCache(capacity int) *relayCache {
 		RWMutex: new(sync.RWMutex),
 
 		maxCap: capacity,
-		elems:  make(map[util.Uint256]*list.Element),
+		elems:  make(map[common.Hash]*list.Element),
 		queue:  list.New(),
 	}
 }
 
-// Add adds payload into cache if it doesn't already exist there.
+// Add adds payload into a cache if it doesn't already exist.
 func (c *relayCache) Add(p hashable) {
 	c.Lock()
 	defer c.Unlock()
@@ -52,8 +52,8 @@ func (c *relayCache) Add(p hashable) {
 	c.elems[h] = e
 }
 
-// Has checks if the item is already in cache.
-func (c *relayCache) Has(h util.Uint256) bool {
+// Has checks if an item is already in cache.
+func (c *relayCache) Has(h common.Hash) bool {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -61,7 +61,7 @@ func (c *relayCache) Has(h util.Uint256) bool {
 }
 
 // Get returns payload with the specified hash from cache.
-func (c *relayCache) Get(h util.Uint256) hashable {
+func (c *relayCache) Get(h common.Hash) hashable {
 	c.RLock()
 	defer c.RUnlock()
 

@@ -45,6 +45,13 @@ func (s *LevelDBStore) Get(key []byte) ([]byte, error) {
 	return value, err
 }
 
+func (s *LevelDBStore) Put(key, value []byte) error {
+	if value == nil {
+		return s.db.Delete(key, nil)
+	}
+	return s.db.Put(key, value, nil)
+}
+
 // PutChangeSet implements the Store interface.
 func (s *LevelDBStore) PutChangeSet(puts map[string][]byte, stores map[string][]byte) error {
 	tx, err := s.db.OpenTransaction()

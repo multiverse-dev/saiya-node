@@ -3,25 +3,24 @@ package network
 import (
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
+	"github.com/multiverse-dev/saiya/pkg/config"
 	"go.uber.org/zap/zapcore"
 )
 
 type (
 	// ServerConfig holds the server configuration.
 	ServerConfig struct {
-		// MinPeers is the minimum number of peers for normal operation.
-		// When a node has less than this number of peers, it tries to
+		// MinPeers is the minimum number of peers for normal operation,
+		// when the node has less than this number of peers it tries to
 		// connect with some new ones.
 		MinPeers int
 
-		// AttemptConnPeers is the number of connection to try to
+		// AttemptConnPeers it the number of connection to try to
 		// establish when the connection count drops below the MinPeers
 		// value.
 		AttemptConnPeers int
 
-		// MaxPeers is the maximum number of peers that can
+		// MaxPeers it the maximum numbers of peers that can
 		// be connected to the server.
 		MaxPeers int
 
@@ -36,17 +35,13 @@ type (
 
 		// Port is the actual node port it is bound to. Example: 20332.
 		Port uint16
-
-		// The network mode the server will operate on.
-		// ModePrivNet docker private network.
-		// ModeTestNet NEO test network.
-		// ModeMainNet NEO main network.
-		Net netmode.Magic
+		
+		ChainID uint64
 
 		// Relay determines whether the server is forwarding its inventory.
 		Relay bool
 
-		// Seeds is a list of initial nodes used to establish connectivity.
+		// Seeds are a list of initial nodes used to establish connectivity.
 		Seeds []string
 
 		// Maximum duration a single dial may take.
@@ -70,16 +65,10 @@ type (
 		// TimePerBlock is an interval which should pass between two successive blocks.
 		TimePerBlock time.Duration
 
-		// OracleCfg is oracle module configuration.
-		OracleCfg config.OracleConfiguration
-
-		// P2PNotaryCfg is notary module configuration.
-		P2PNotaryCfg config.P2PNotary
-
 		// StateRootCfg is stateroot module configuration.
 		StateRootCfg config.StateRoot
 
-		// ExtensiblePoolSize is the size of the pool for extensible payloads from a single sender.
+		// ExtensiblePoolSize is size of the pool for extensible payloads from a single sender.
 		ExtensiblePoolSize int
 	}
 )
@@ -100,7 +89,7 @@ func NewServerConfig(cfg config.Config) ServerConfig {
 		Address:            appConfig.Address,
 		AnnouncedPort:      appConfig.AnnouncedNodePort,
 		Port:               appConfig.NodePort,
-		Net:                protoConfig.Magic,
+		ChainID:            protoConfig.ChainID,
 		Relay:              appConfig.Relay,
 		Seeds:              protoConfig.SeedList,
 		DialTimeout:        time.Duration(appConfig.DialTimeout) * time.Second,
@@ -112,8 +101,6 @@ func NewServerConfig(cfg config.Config) ServerConfig {
 		MinPeers:           appConfig.MinPeers,
 		Wallet:             wc,
 		TimePerBlock:       time.Duration(protoConfig.SecondsPerBlock) * time.Second,
-		OracleCfg:          appConfig.Oracle,
-		P2PNotaryCfg:       appConfig.P2PNotary,
 		StateRootCfg:       appConfig.StateRoot,
 		ExtensiblePoolSize: appConfig.ExtensiblePoolSize,
 	}

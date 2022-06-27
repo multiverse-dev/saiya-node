@@ -3,55 +3,43 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/elliptic"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/gorilla/websocket"
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/core"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/blockchainer"
-	"github.com/nspcc-dev/neo-go/pkg/core/fee"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop/iterator"
-	"github.com/nspcc-dev/neo-go/pkg/core/mempoolevent"
-	"github.com/nspcc-dev/neo-go/pkg/core/mpt"
-	"github.com/nspcc-dev/neo-go/pkg/core/native"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/rpc"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/request"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/response"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/response/result"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/response/result/subscriptions"
-	"github.com/nspcc-dev/neo-go/pkg/services/oracle"
-	"github.com/nspcc-dev/neo-go/pkg/services/oracle/broadcaster"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/callflag"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/trigger"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/emit"
-	"github.com/nspcc-dev/neo-go/pkg/vm/opcode"
-	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
-	"go.uber.org/atomic"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/blockchainer"
+	"github.com/multiverse-dev/saiya/pkg/core/filters"
+	"github.com/multiverse-dev/saiya/pkg/core/mpt"
+	"github.com/multiverse-dev/saiya/pkg/core/native"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/encoding/address"
+	"github.com/multiverse-dev/saiya/pkg/evm"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network"
+	"github.com/multiverse-dev/saiya/pkg/rpc"
+	"github.com/multiverse-dev/saiya/pkg/rpc/request"
+	"github.com/multiverse-dev/saiya/pkg/rpc/response"
+	"github.com/multiverse-dev/saiya/pkg/rpc/response/result"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"go.uber.org/zap"
 )
 
@@ -59,36 +47,33 @@ type (
 	// Server represents the JSON-RPC 2.0 server.
 	Server struct {
 		*http.Server
-		chain  blockchainer.Blockchainer
-		config rpc.Config
-		// wsReadLimit represents web-socket message limit for a receiving side.
-		wsReadLimit      int64
-		network          netmode.Magic
-		stateRootEnabled bool
-		coreServer       *network.Server
-		oracle           *oracle.Oracle
-		log              *zap.Logger
-		https            *http.Server
-		shutdown         chan struct{}
-		started          *atomic.Bool
-		errChan          chan error
+		chain      blockchainer.Blockchainer
+		config     rpc.Config
+		chainId    uint64
+		coreServer *network.Server
+		log        *zap.Logger
+		https      *http.Server
+		shutdown   chan struct{}
 
-		subsLock          sync.RWMutex
-		subscribers       map[*subscriber]bool
-		blockSubs         int
-		executionSubs     int
-		notificationSubs  int
-		transactionSubs   int
-		notaryRequestSubs int
-		blockCh           chan *block.Block
-		executionCh       chan *state.AppExecResult
-		notificationCh    chan *subscriptions.NotificationEvent
-		transactionCh     chan *transaction.Transaction
-		notaryRequestCh   chan mempoolevent.Event
+		subsLock         sync.RWMutex
+		subscribers      map[*subscriber]bool
+		blockSubs        int
+		executionSubs    int
+		notificationSubs int
+		transactionSubs  int
+		blockCh          chan *block.Block
+		executionCh      chan *types.Receipt
+		notificationCh   chan *types.Log
+		transactionCh    chan *transaction.Transaction
+
+		accounts []*wallet.Account
 	}
 )
 
 const (
+	// Message limit for receiving side.
+	wsReadLimit = 4096
+
 	// Disconnection timeout.
 	wsPongLimit = 60 * time.Second
 
@@ -99,58 +84,93 @@ const (
 	wsWriteLimit = wsPingPeriod / 2
 
 	// Maximum number of subscribers per Server. Each websocket client is
-	// treated like a subscriber, so technically it's a limit on websocket
+	// treated like subscriber, so technically it's a limit on websocket
 	// connections.
 	maxSubscribers = 64
-
-	// Maximum number of elements for get*transfers requests.
-	maxTransfersLimit = 1000
 )
 
 var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *response.Error){
-	"calculatenetworkfee":          (*Server).calculateNetworkFee,
-	"findstates":                   (*Server).findStates,
-	"getapplicationlog":            (*Server).getApplicationLog,
-	"getbestblockhash":             (*Server).getBestBlockHash,
-	"getblock":                     (*Server).getBlock,
-	"getblockcount":                (*Server).getBlockCount,
-	"getblockhash":                 (*Server).getBlockHash,
-	"getblockheader":               (*Server).getBlockHeader,
-	"getblockheadercount":          (*Server).getBlockHeaderCount,
-	"getblocksysfee":               (*Server).getBlockSysFee,
-	"getcommittee":                 (*Server).getCommittee,
-	"getconnectioncount":           (*Server).getConnectionCount,
-	"getcontractstate":             (*Server).getContractState,
-	"getnativecontracts":           (*Server).getNativeContracts,
-	"getnep11balances":             (*Server).getNEP11Balances,
-	"getnep11properties":           (*Server).getNEP11Properties,
-	"getnep11transfers":            (*Server).getNEP11Transfers,
-	"getnep17balances":             (*Server).getNEP17Balances,
-	"getnep17transfers":            (*Server).getNEP17Transfers,
-	"getpeers":                     (*Server).getPeers,
-	"getproof":                     (*Server).getProof,
-	"getrawmempool":                (*Server).getRawMempool,
-	"getrawtransaction":            (*Server).getrawtransaction,
-	"getstate":                     (*Server).getState,
-	"getstateheight":               (*Server).getStateHeight,
-	"getstateroot":                 (*Server).getStateRoot,
-	"getstorage":                   (*Server).getStorage,
-	"gettransactionheight":         (*Server).getTransactionHeight,
-	"getunclaimedgas":              (*Server).getUnclaimedGas,
-	"getnextblockvalidators":       (*Server).getNextBlockValidators,
-	"getversion":                   (*Server).getVersion,
-	"invokefunction":               (*Server).invokeFunction,
-	"invokefunctionhistoric":       (*Server).invokeFunctionHistoric,
-	"invokescript":                 (*Server).invokescript,
-	"invokescripthistoric":         (*Server).invokescripthistoric,
-	"invokecontractverify":         (*Server).invokeContractVerify,
-	"invokecontractverifyhistoric": (*Server).invokeContractVerifyHistoric,
-	"sendrawtransaction":           (*Server).sendrawtransaction,
-	"submitblock":                  (*Server).submitBlock,
-	"submitnotaryrequest":          (*Server).submitNotaryRequest,
-	"submitoracleresponse":         (*Server).submitOracleResponse,
-	"validateaddress":              (*Server).validateAddress,
-	"verifyproof":                  (*Server).verifyProof,
+	// -- start eth api
+	"web3_clientVersion":                      (*Server).web3_clientVersion,
+	"web3_sha3":                               (*Server).web3_sha3,
+	"net_version":                             (*Server).net_version,
+	"net_peerCount":                           (*Server).net_peerCount,
+	"net_listening":                           (*Server).net_listening,
+	"eth_protocolVersion":                     (*Server).eth_protocolVersion,
+	"eth_chainId":                             (*Server).eth_chainId,
+	"eth_syncing":                             (*Server).eth_syncing,
+	"eth_coinbase":                            (*Server).eth_coinbase, //TODO
+	"eth_mining":                              (*Server).eth_mining,
+	"eth_hashrate":                            (*Server).eth_hashrate,
+	"eth_gasPrice":                            (*Server).eth_gasPrice,
+	"eth_accounts":                            (*Server).eth_accounts,
+	"eth_blockNumber":                         (*Server).eth_blockNumber,
+	"eth_getBalance":                          (*Server).eth_getBalance,
+	"eth_getStorageAt":                        (*Server).eth_getStorageAt,
+	"eth_getTransactionCount":                 (*Server).eth_getTransactionCount,
+	"eth_getBlockTransactionCountByHash":      (*Server).eth_getBlockTransactionCountByHash,
+	"eth_getBlockTransactionCountByNumber":    (*Server).eth_getBlockTransactionCountByNumber,
+	"eth_getUncleCountByBlockHash":            (*Server).eth_getUncleCountByBlockHash,
+	"eth_getUncleCountByBlockNumber":          (*Server).eth_getUncleCountByBlockNumber,
+	"eth_getCode":                             (*Server).eth_getCode,
+	"eth_sign":                                (*Server).eth_sign,
+	"eth_signTransaction":                     (*Server).eth_signTransaction,
+	"eth_sendTransaction":                     (*Server).eth_sendTransaction,
+	"eth_sendRawTransaction":                  (*Server).eth_sendRawTransaction,
+	"eth_call":                                (*Server).eth_call,
+	"eth_estimateGas":                         (*Server).eth_estimateGas,
+	"eth_getBlockByHash":                      (*Server).eth_getBlockByHash,
+	"eth_getBlockByNumber":                    (*Server).eth_getBlockByNumber,
+	"eth_getTransactionByHash":                (*Server).eth_getTransactionByHash,
+	"eth_getTransactionByBlockHashAndIndex":   (*Server).eth_getTransactionByBlockHashAndIndex,
+	"eth_getTransactionByBlockNumberAndIndex": (*Server).eth_getTransactionByBlockNumberAndIndex,
+	"eth_getTransactionReceipt":               (*Server).eth_getTransactionReceipt,
+	"eth_getUncleByBlockHashAndIndex":         (*Server).eth_getUncleByBlockHashAndIndex,
+	"eth_getCompilers":                        (*Server).eth_getCompilers,
+	"eth_compileSolidity":                     (*Server).eth_compileSolidity,
+	"eth_compileLLL":                          (*Server).eth_compileLLL,
+	"eth_compileSerpent":                      (*Server).eth_compileSerpent,
+	"eth_newFilter":                           (*Server).eth_newFilter,
+	"eth_newBlockFilter":                      (*Server).eth_newBlockFilter,
+	"eth_newPendingTransactionFilter":         (*Server).eth_newPendingTransactionFilter,
+	"eth_uninstallFilter":                     (*Server).eth_uninstallFilter,
+	"eth_getFilterChanges":                    (*Server).eth_getFilterChanges,
+	"eth_getFilterLogs":                       (*Server).eth_getFilterLogs,
+	"eth_getLogs":                             (*Server).eth_getLogs,
+	"eth_getWork":                             (*Server).eth_getWork,
+	"eth_submitWork":                          (*Server).eth_submitWork,
+	"eth_submitHashrate":                      (*Server).eth_submitHashrate,
+	// -- end eth api
+	"getversion":           (*Server).getVersion,
+	"calculatenetworkfee":  (*Server).calculateNetworkFee,
+	"findstates":           (*Server).findStates,
+	"getbestblockhash":     (*Server).getBestBlockHash,
+	"getblock":             (*Server).getBlock,
+	"getblockcount":        (*Server).getBlockCount,
+	"getblockhash":         (*Server).getBlockHash,
+	"getblockheader":       (*Server).getBlockHeader,
+	"getblockheadercount":  (*Server).getBlockHeaderCount,
+	"getblocksysfee":       (*Server).getBlockSysFee,
+	"getcommittee":         (*Server).getCommittee,
+	"getcommitteeaddress":  (*Server).getCommitteeAddress,
+	"getconnectioncount":   (*Server).getConnectionCount,
+	"getcontractstate":     (*Server).getContractState,
+	"getfeeperbyte":        (*Server).getFeePerByte,
+	"getnativecontracts":   (*Server).getNativeContracts,
+	"getpeers":             (*Server).getPeers,
+	"getproof":             (*Server).getProof,
+	"getrawmempool":        (*Server).getRawMempool,
+	"getrawtransaction":    (*Server).getrawtransaction,
+	"getstate":             (*Server).getState,
+	"getstateheight":       (*Server).getStateHeight,
+	"getstateroot":         (*Server).getStateRoot,
+	"getstorage":           (*Server).getStorage,
+	"gettransactionheight": (*Server).getTransactionHeight,
+	"getvalidators":        (*Server).getValidators,
+	"sendrawtransaction":   (*Server).sendrawtransaction,
+	"validateaddress":      (*Server).validateAddress,
+	"verifyproof":          (*Server).verifyProof,
+	"isblocked":            (*Server).isBlocked,
 }
 
 var rpcWsHandlers = map[string]func(*Server, request.Params, *subscriber) (interface{}, *response.Error){
@@ -167,8 +187,7 @@ var invalidBlockHeightError = func(index int, height int) *response.Error {
 var upgrader = websocket.Upgrader{}
 
 // New creates a new Server struct.
-func New(chain blockchainer.Blockchainer, conf rpc.Config, coreServer *network.Server,
-	orc *oracle.Oracle, log *zap.Logger, errChan chan error) Server {
+func New(chain blockchainer.Blockchainer, conf rpc.Config, coreServer *network.Server, wall *config.Wallet, log *zap.Logger) Server {
 	httpServer := &http.Server{
 		Addr: conf.Address + ":" + strconv.FormatUint(uint64(conf.Port), 10),
 	}
@@ -180,48 +199,61 @@ func New(chain blockchainer.Blockchainer, conf rpc.Config, coreServer *network.S
 		}
 	}
 
-	if orc != nil {
-		orc.SetBroadcaster(broadcaster.New(orc.MainCfg, log))
-	}
 	return Server{
-		Server:           httpServer,
-		chain:            chain,
-		config:           conf,
-		wsReadLimit:      int64(chain.GetConfig().MaxBlockSize*4)/3 + 1024, // Enough for Base64-encoded content of `submitblock` and `submitp2pnotaryrequest`.
-		network:          chain.GetConfig().Magic,
-		stateRootEnabled: chain.GetConfig().StateRootInHeader,
-		coreServer:       coreServer,
-		log:              log,
-		oracle:           orc,
-		https:            tlsServer,
-		shutdown:         make(chan struct{}),
-		started:          atomic.NewBool(false),
-		errChan:          errChan,
+		Server:     httpServer,
+		chain:      chain,
+		config:     conf,
+		chainId:    chain.GetConfig().ChainID,
+		coreServer: coreServer,
+		log:        log,
+		https:      tlsServer,
+		shutdown:   make(chan struct{}),
 
 		subscribers: make(map[*subscriber]bool),
 		// These are NOT buffered to preserve original order of events.
-		blockCh:         make(chan *block.Block),
-		executionCh:     make(chan *state.AppExecResult),
-		notificationCh:  make(chan *subscriptions.NotificationEvent),
-		transactionCh:   make(chan *transaction.Transaction),
-		notaryRequestCh: make(chan mempoolevent.Event),
+		blockCh:        make(chan *block.Block),
+		executionCh:    make(chan *types.Receipt),
+		notificationCh: make(chan *types.Log),
+		transactionCh:  make(chan *transaction.Transaction),
+
+		accounts: getAccounts(wall),
 	}
 }
 
-// Name returns service name.
-func (s *Server) Name() string {
-	return "rpc"
+func getAccounts(wall *config.Wallet) []*wallet.Account {
+	if wall == nil {
+		return nil
+	}
+	accs := []*wallet.Account{nil}
+	w, err := wallet.NewWalletFromFile(wall.Path)
+	if err != nil {
+		return nil
+	}
+	for _, acc := range w.Accounts {
+		err := acc.Decrypt(wall.Password, w.Scrypt)
+		if err == nil {
+			if acc.Default && accs[0] == nil {
+				accs[0] = acc
+			} else {
+				accs = append(accs, acc)
+			}
+		}
+	}
+	if accs[0] == nil {
+		accs = accs[1:]
+	}
+	if len(accs) == 0 {
+		return nil
+	}
+	return accs
 }
 
-// Start creates a new JSON-RPC server listening on the configured port. It creates
-// goroutines needed internally and it returns its errors via errChan passed to New().
-func (s *Server) Start() {
+// Start creates a new JSON-RPC server listening on the configured port. It's
+// supposed to be run as a separate goroutine (like http.Server's Serve) and it
+// returns its errors via given errChan.
+func (s *Server) Start(errChan chan error) {
 	if !s.config.Enabled {
 		s.log.Info("RPC server is not enabled")
-		return
-	}
-	if !s.started.CAS(false, true) {
-		s.log.Info("RPC server already started")
 		return
 	}
 	s.Handler = http.HandlerFunc(s.handleHTTPRequest)
@@ -234,20 +266,20 @@ func (s *Server) Start() {
 		go func() {
 			ln, err := net.Listen("tcp", s.https.Addr)
 			if err != nil {
-				s.errChan <- err
+				errChan <- err
 				return
 			}
 			s.https.Addr = ln.Addr().String()
 			err = s.https.ServeTLS(ln, cfg.CertFile, cfg.KeyFile)
 			if err != http.ErrServerClosed {
 				s.log.Error("failed to start TLS RPC server", zap.Error(err))
-				s.errChan <- err
+				errChan <- err
 			}
 		}()
 	}
 	ln, err := net.Listen("tcp", s.Addr)
 	if err != nil {
-		s.errChan <- err
+		errChan <- err
 		return
 	}
 	s.Addr = ln.Addr().String() // set Addr to the actual address
@@ -255,35 +287,37 @@ func (s *Server) Start() {
 		err = s.Serve(ln)
 		if err != http.ErrServerClosed {
 			s.log.Error("failed to start RPC server", zap.Error(err))
-			s.errChan <- err
+			errChan <- err
 		}
 	}()
 }
 
-// Shutdown stops the RPC server. It can only be called once.
-func (s *Server) Shutdown() {
-	if !s.started.Load() {
-		return
+// Shutdown overrides the http.Server Shutdown
+// method.
+func (s *Server) Shutdown() error {
+	if !s.config.Enabled {
+		return nil
 	}
+	var httpsErr error
+
 	// Signal to websocket writer routines and handleSubEvents.
 	close(s.shutdown)
 
 	if s.config.TLSConfig.Enabled {
-		s.log.Info("shutting down RPC server (https)", zap.String("endpoint", s.https.Addr))
-		err := s.https.Shutdown(context.Background())
-		if err != nil {
-			s.log.Warn("error during RPC (https) server shutdown", zap.Error(err))
-		}
+		s.log.Info("shutting down rpc-server (https)", zap.String("endpoint", s.https.Addr))
+		httpsErr = s.https.Shutdown(context.Background())
 	}
 
-	s.log.Info("shutting down RPC server", zap.String("endpoint", s.Addr))
+	s.log.Info("shutting down rpc-server", zap.String("endpoint", s.Addr))
 	err := s.Server.Shutdown(context.Background())
-	if err != nil {
-		s.log.Warn("error during RPC (http) server shutdown", zap.Error(err))
-	}
 
 	// Wait for handleSubEvents to finish.
 	<-s.executionCh
+
+	if err == nil {
+		return httpsErr
+	}
+	return err
 }
 
 func (s *Server) handleHTTPRequest(w http.ResponseWriter, httpRequest *http.Request) {
@@ -301,7 +335,7 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, httpRequest *http.Requ
 			s.writeHTTPErrorResponse(
 				request.NewIn(),
 				w,
-				response.NewInternalServerError("websocket users limit reached", fmt.Errorf("%d subscribers are allowed at max", maxSubscribers)),
+				response.NewInternalServerError("websocket users limit reached", nil),
 			)
 			return
 		}
@@ -326,7 +360,7 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, httpRequest *http.Requ
 			request.NewIn(),
 			w,
 			response.NewInvalidParamsError(
-				fmt.Sprintf("Invalid method '%s', please retry with 'POST'", httpRequest.Method), errors.New("unsupported HTTP request method"),
+				fmt.Sprintf("Invalid method '%s', please retry with 'POST'", httpRequest.Method), nil,
 			),
 		)
 		return
@@ -344,12 +378,10 @@ func (s *Server) handleHTTPRequest(w http.ResponseWriter, httpRequest *http.Requ
 
 func (s *Server) handleRequest(req *request.Request, sub *subscriber) response.AbstractResult {
 	if req.In != nil {
-		req.In.Method = escapeForLog(req.In.Method) // No valid method name will be changed by it.
 		return s.handleIn(req.In, sub)
 	}
 	resp := make(response.AbstractBatch, len(req.Batch))
 	for i, in := range req.Batch {
-		in.Method = escapeForLog(in.Method) // No valid method name will be changed by it.
 		resp[i] = s.handleIn(&in, sub)
 	}
 	return resp
@@ -370,7 +402,7 @@ func (s *Server) handleIn(req *request.In, sub *subscriber) response.Abstract {
 
 	incCounter(req.Method)
 
-	resErr = response.NewMethodNotFoundError(fmt.Sprintf("Method %q not supported", req.Method), errors.New("unsupported method call"))
+	resErr = response.NewMethodNotFoundError(fmt.Sprintf("Method '%s' not supported", req.Method), nil)
 	handler, ok := rpcHandlers[req.Method]
 	if ok {
 		res, resErr = handler(s, reqParams)
@@ -437,7 +469,7 @@ drainloop:
 }
 
 func (s *Server) handleWsReads(ws *websocket.Conn, resChan chan<- response.AbstractResult, subscr *subscriber) {
-	ws.SetReadLimit(s.wsReadLimit)
+	ws.SetReadLimit(wsReadLimit)
 	err := ws.SetReadDeadline(time.Now().Add(wsPongLimit))
 	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(wsPongLimit)) })
 requestloop:
@@ -469,8 +501,735 @@ requestloop:
 	ws.Close()
 }
 
+// -- start eth api.
+
+func (s *Server) getWalletAccount(address common.Address) *wallet.Account {
+	if s.accounts == nil {
+		return nil
+	}
+	for _, account := range s.accounts {
+		if account.Address == address {
+			return account
+		}
+	}
+	return nil
+}
+
+func (s *Server) web3_clientVersion(_ request.Params) (interface{}, *response.Error) {
+	return s.coreServer.UserAgent, nil
+}
+
+func (s *Server) web3_sha3(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	bs, err := param.GetString()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	data, err := hexutil.Decode(bs)
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	return hash.Keccak256(data), nil
+}
+
+func (s *Server) net_version(_ request.Params) (interface{}, *response.Error) {
+	return s.chainId, nil
+}
+
+func (s *Server) net_peerCount(_ request.Params) (interface{}, *response.Error) {
+	return hexutil.EncodeUint64(uint64(s.coreServer.PeerCount())), nil
+}
+
+func (s *Server) net_listening(_ request.Params) (interface{}, *response.Error) {
+	return s.coreServer != nil, nil
+}
+
+func (s *Server) eth_protocolVersion(_ request.Params) (interface{}, *response.Error) {
+	return strconv.Itoa(int(s.chainId)), nil
+}
+
+func (s *Server) eth_chainId(_ request.Params) (interface{}, *response.Error) {
+	return hexutil.EncodeUint64(s.chainId), nil
+}
+
+func (s *Server) eth_syncing(_ request.Params) (interface{}, *response.Error) {
+	return result.Syncing{
+		StartingBlock: "0x0",
+		CurrentBlock:  hexutil.EncodeUint64(uint64(s.chain.BlockHeight())),
+		HighestBlock:  hexutil.EncodeUint64(uint64(s.chain.HeaderHeight())),
+	}, nil
+}
+
+func (s *Server) eth_coinbase(_ request.Params) (interface{}, *response.Error) {
+	if s.accounts != nil {
+		return s.accounts[0].Address, nil
+	}
+	return nil, nil
+}
+
+// we don't use POW so return FALSE as default
+func (s *Server) eth_mining(_ request.Params) (interface{}, *response.Error) {
+	return false, nil
+}
+
+// we don't use POW so return 0 as default
+func (s *Server) eth_hashrate(_ request.Params) (interface{}, *response.Error) {
+	return "0x0", nil
+}
+
+func (s *Server) eth_gasPrice(_ request.Params) (interface{}, *response.Error) {
+	return hexutil.EncodeBig(s.chain.GetGasPrice()), nil
+}
+
+func (s *Server) eth_accounts(_ request.Params) (interface{}, *response.Error) {
+	result := make([]common.Address, len(s.accounts))
+	for i, acc := range s.accounts {
+		result[i] = acc.Address
+	}
+	return result, nil
+}
+
+func (s *Server) eth_blockNumber(_ request.Params) (interface{}, *response.Error) {
+	return hexutil.EncodeUint64(uint64(s.chain.BlockHeight())), nil
+}
+
+// We only return latest balance of SAIYA
+func (s *Server) eth_getBalance(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	addr, err := param.GetAddressFromHex()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+	}
+	balance := s.chain.GetUtilityTokenBalance(addr)
+	return hexutil.EncodeBig(balance), nil
+}
+
+func (s *Server) eth_getStorageAt(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	addr, err := param.GetAddressFromHex()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+	}
+	param = params.Value(1)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	key, err := param.GetString()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	hashKey := common.HexToHash(key)
+	si := s.chain.GetStorageItem(addr, hashKey.Bytes())
+	return hexutil.Encode(common.BytesToHash(si).Bytes()), nil
+}
+
+func (s *Server) eth_getTransactionCount(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	addr, err := param.GetAddressFromHex()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+	}
+	return hexutil.EncodeUint64(s.chain.GetNonce(addr)), nil
+}
+
+func (s *Server) eth_getBlockTransactionCountByHash(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	hash, err := param.GetHash()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid hash", err)
+	}
+	b, err := s.chain.GetBlock(hash, false)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
+	}
+	return hexutil.EncodeUint64(uint64(len(b.Transactions))), nil
+}
+
+func (s *Server) eth_getBlockTransactionCountByNumber(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	num, err := param.GetString()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid number", err)
+	}
+	index, err := hexutil.DecodeUint64(num)
+	if err != nil {
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("Problem parsing block number: %s", num), err)
+	}
+	hash := s.chain.GetHeaderHash(int(index))
+	if hash == (common.Hash{}) {
+		return nil, nil
+	}
+	b, err := s.chain.GetBlock(hash, false)
+	if err != nil {
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
+	}
+	return hexutil.EncodeUint64(uint64(len(b.Transactions))), nil
+}
+
+// Unsupported, there isn't uncle blocks in saiya
+func (s *Server) eth_getUncleCountByBlockHash(_ request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("There are no uncle blocks in Saiya", errors.New("not supported"))
+}
+
+// Unsupported, there isn't uncle blocks in saiya
+func (s *Server) eth_getUncleCountByBlockNumber(_ request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("There are no uncle blocks in Saiya", errors.New("not supported"))
+}
+
+func (s *Server) eth_getCode(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	addr, err := param.GetAddressFromHex()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+	}
+	cs := s.chain.GetContractState(addr)
+	if cs == nil {
+		return nil, nil
+	}
+	return hexutil.Encode(cs.Code), nil
+}
+
+func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) {
+	if s.accounts == nil {
+		return nil, response.NewInternalServerError("No wallet opened", errors.New("wallet not open"))
+	}
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	saddr, err := param.GetString()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	addr := common.HexToAddress(saddr)
+	var acc *wallet.Account
+	for _, a := range s.accounts {
+		if a.Address == addr {
+			acc = a
+			break
+		}
+	}
+	if acc == nil {
+		return nil, response.NewInternalServerError("Account not found", errors.New("account not found"))
+	}
+	text, err := param.GetString()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	data, err := hexutil.Decode(text)
+	if err != nil {
+		return nil, response.NewInvalidParamsError("Could not decode hex text", err)
+	}
+	hash := accounts.TextHash(data)
+	sig, err := crypto.Sign(hash, &s.accounts[0].PrivateKey().PrivateKey)
+	if err != nil {
+		return nil, response.NewInternalServerError("Failed sign tx", err)
+	}
+	return hexutil.Encode(sig), nil
+}
+
+func (s *Server) eth_signTransaction(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	data := []byte(param.RawMessage)
+	txObj := result.TransactionObject{}
+	err := json.Unmarshal(data, &txObj)
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	acc := s.getWalletAccount(txObj.From)
+	if acc == nil {
+		return nil, response.NewInternalServerError("Could not found accout to sign tx", errors.New("account not found"))
+	}
+	inner := &types.LegacyTx{
+		Nonce: s.chain.GetNonce(txObj.From) + 1,
+		To:    txObj.To,
+		Value: txObj.Value,
+		Data:  txObj.Data,
+	}
+	tx := transaction.NewTx(inner)
+	tx.EthFrom = txObj.From
+	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not get current block", err)
+	}
+	ic, err := s.chain.GetTestVM(tx, fakeBlock)
+	if err != nil {
+		if err != nil {
+			return nil, response.NewInternalServerError("Could not create execute context", err)
+		}
+	}
+	var left uint64
+	if inner.To == nil {
+		_, _, left, err = ic.VM.Create(ic, inner.Data, evm.TestGas, inner.Value)
+	} else {
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+	}
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not executing data", err)
+	}
+	inner.Gas = evm.TestGas - left
+	err = acc.SignTx(s.chainId, tx)
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not sign tx", err)
+	}
+	raw, err := io.ToByteArray(tx)
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not serialize tx", err)
+	}
+	return hexutil.Encode(raw), nil
+}
+
+func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	data := []byte(param.RawMessage)
+	txObj := result.TransactionObject{}
+	err := json.Unmarshal(data, &txObj)
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	acc := s.getWalletAccount(txObj.From)
+	if acc == nil {
+		return nil, response.NewInternalServerError("Could not found accout to sign tx", errors.New("account not found"))
+	}
+	inner := &types.LegacyTx{
+		Nonce:    s.chain.GetNonce(txObj.From),
+		GasPrice: s.chain.GetGasPrice(),
+		To:       txObj.To,
+		Value:    txObj.Value,
+		Data:     txObj.Data,
+	}
+	tx := transaction.NewTx(inner)
+	tx.EthFrom = txObj.From
+	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not get current block", err)
+	}
+	ic, err := s.chain.GetTestVM(tx, fakeBlock)
+	if err != nil {
+		if err != nil {
+			return nil, response.NewInternalServerError("Could not create execute context", err)
+		}
+	}
+	var left uint64
+	if inner.To == nil {
+		_, _, left, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+	} else {
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+	}
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not executing data", err)
+	}
+	inner.Gas = evm.TestGas - left
+	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
+	inner.Gas += netfee
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not calculate network fee", err)
+	}
+	err = acc.SignTx(s.chainId, tx)
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not sign tx", err)
+	}
+	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
+}
+
+func (s *Server) eth_sendRawTransaction(params request.Params) (interface{}, *response.Error) {
+	if len(params) < 1 {
+		return nil, response.NewInvalidParamsError("not enough parameters", nil)
+	}
+	rawTx, err := params[0].GetBytesHex()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid hex", err)
+	}
+	bw := io.NewBufBinWriter()
+	bw.WriteB(transaction.EthLegacyTxType)
+	bw.WriteVarBytes(rawTx)
+	tx, err := transaction.NewTransactionFromBytes(bw.Bytes())
+	if err != nil {
+		return nil, response.NewInvalidParamsError("can't decode transaction", err)
+	}
+	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
+}
+
+func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	data := []byte(param.RawMessage)
+	txObj := result.TransactionObject{}
+	err := json.Unmarshal(data, &txObj)
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	inner := &types.LegacyTx{
+		Nonce:    s.chain.GetNonce(txObj.From) + 1,
+		GasPrice: s.chain.GetGasPrice(),
+		Gas:      txObj.Gas,
+		To:       txObj.To,
+		Value:    txObj.Value,
+		Data:     txObj.Data,
+	}
+	tx := transaction.NewTx(inner)
+	tx.EthFrom = txObj.From
+	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not get current block", err)
+	}
+	ic, err := s.chain.GetTestVM(tx, block)
+	if err != nil {
+		if err != nil {
+			return nil, response.NewInternalServerError("Could not create execute context", err)
+		}
+	}
+	var ret []byte
+	if inner.To == nil {
+		ret, _, _, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+	} else {
+		ret, _, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+	}
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not executing data", err)
+	}
+	return hexutil.Encode(ret), nil
+}
+
+func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *response.Error) {
+	param := reqParams.Value(0)
+	data := []byte(param.RawMessage)
+	txObj := result.TransactionObject{}
+	err := json.Unmarshal(data, &txObj)
+	if err != nil {
+		return nil, response.NewInvalidParamsError("Could not unmarshal tx object", err)
+	}
+	inner := &types.LegacyTx{
+		Nonce:    s.chain.GetNonce(txObj.From) + 1,
+		GasPrice: s.chain.GetGasPrice(),
+		To:       txObj.To,
+		Value:    txObj.Value,
+		Data:     txObj.Data,
+	}
+	tx := transaction.NewTx(inner)
+	tx.EthFrom = txObj.From
+	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not get current block", err)
+	}
+	fakeBlock := *block
+	ic, err := s.chain.GetTestVM(tx, &fakeBlock)
+	if err != nil {
+		if err != nil {
+			return nil, response.NewInternalServerError("Could not create execute context", err)
+		}
+	}
+	var left uint64
+	if inner.To == nil {
+		_, _, left, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+	} else {
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+	}
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not executing data: "+err.Error(), err)
+	}
+	inner.Gas = evm.TestGas - left
+	feePerByte := s.chain.GetFeePerByte()
+	netfee := transaction.CalculateNetworkFee(tx, feePerByte)
+	if err != nil {
+		return nil, response.NewInvalidRequestError("Could not calculate network fee", err)
+	}
+	inner.Gas += netfee + params.SstoreSentryGasEIP2200
+	return hexutil.EncodeUint64(inner.Gas), nil
+}
+
+func (s *Server) eth_getBlockByHash(params request.Params) (interface{}, *response.Error) {
+	param0 := params.Value(0)
+	hash, err := param0.GetHash()
+	if err != nil {
+		return nil, response.NewInvalidParamsError("invalid hash", err)
+	}
+	full := true
+	param1 := params.Value(1)
+	if param1 != nil {
+		f, err := param1.GetBoolean()
+		if err != nil {
+			return nil, response.ErrInvalidParams
+		}
+		full = f
+	}
+	block, err := s.chain.GetBlock(hash, full)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
+	}
+	return result.NewBlock(block, s.chain), nil
+}
+
+func (s *Server) eth_getBlockByNumber(params request.Params) (interface{}, *response.Error) {
+	param0 := params.Value(0)
+	if param0 == nil {
+		return nil, response.ErrInvalidParams
+	}
+	sh, err := param0.GetString()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	var hash common.Hash
+	h, err := hexutil.DecodeUint64(sh)
+	if err != nil {
+		if sh == "latest" {
+			hash = s.chain.CurrentBlockHash()
+		} else if sh == "earliest" || sh == "pending" {
+			return nil, response.NewInternalServerError(fmt.Sprintf("unsupport param %s", sh), errors.New("unsupport param"))
+		} else {
+			return nil, response.ErrInvalidParams
+		}
+	} else {
+		hash = s.chain.GetHeaderHash(int(h))
+	}
+	full := true
+	param1 := params.Value(1)
+	if param1 != nil {
+		full, err = param1.GetBoolean()
+		if err != nil {
+			return nil, response.NewInvalidParamsError("", err)
+		}
+	}
+	block, err := s.chain.GetBlock(hash, full)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
+	}
+	return result.NewBlock(block, s.chain), nil
+}
+
+func (s *Server) eth_getTransactionByHash(params request.Params) (interface{}, *response.Error) {
+	txHash, err := params.Value(0).GetHash()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	tx, height, err := s.chain.GetTransaction(txHash)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError("Failed to get tx", err)
+	}
+	//pending
+	if height == math.MaxUint32 {
+		return result.NewTransactionOutputRaw(tx, nil, nil), nil
+	}
+	_header := s.chain.GetHeaderHash(int(height))
+	header, err := s.chain.GetHeader(_header)
+	if err != nil {
+		return nil, response.NewRPCError("Failed to get header for the transaction", err.Error(), err)
+	}
+	receipt, err := s.chain.GetReceipt(txHash)
+	if err != nil {
+		return nil, response.NewRPCError("Failed to get receipt for the transaction", err.Error(), err)
+	}
+	return result.NewTransactionOutputRaw(tx, header, receipt), nil
+}
+
+func (s *Server) eth_getTransactionByBlockHashAndIndex(params request.Params) (interface{}, *response.Error) {
+	blockHash, err := params.Value(0).GetHash()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	index, err := params.Value(1).GetInt()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	block, err := s.chain.GetBlock(blockHash, false)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", blockHash), err)
+	}
+	if index < 0 || index >= len(block.Transactions) {
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Index exceeds tx count in block: %d", index), errors.New("index exceeds tx count"))
+	}
+	txHash := block.Transactions[index].Hash()
+	tx, _, err := s.chain.GetTransaction(txHash)
+	if err != nil {
+		return nil, response.NewInternalServerError("Failed to get tx", err)
+	}
+	receipt, err := s.chain.GetReceipt(block.Transactions[index].Hash())
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewRPCError("Failed to get receipt for the transaction", err.Error(), err)
+	}
+	return result.NewTransactionOutputRaw(tx, &block.Header, receipt), nil
+}
+
+func (s *Server) eth_getTransactionByBlockNumberAndIndex(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	num, respErr := s.blockHeightFromParam(param)
+	if respErr != nil {
+		return nil, respErr
+	}
+	blockHash := s.chain.GetHeaderHash(num)
+	index, err := params.Value(1).GetInt()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	block, err := s.chain.GetBlock(blockHash, true)
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", blockHash), err)
+	}
+	if index < 0 || index >= len(block.Transactions) {
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Index exceeds tx count in block: %d", index), errors.New("index exceeds tx count"))
+	}
+	txHash := block.Transactions[index].Hash()
+	tx, _, err := s.chain.GetTransaction(txHash)
+	if err != nil {
+		return nil, response.NewInternalServerError("Failed to get tx", err)
+	}
+	receipt, err := s.chain.GetReceipt(block.Transactions[index].Hash())
+	if err != nil {
+		if errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, response.NewRPCError("Failed to get receipt for the transaction", err.Error(), err)
+	}
+	return result.NewTransactionOutputRaw(tx, &block.Header, receipt), nil
+}
+
+func (s *Server) eth_getTransactionReceipt(params request.Params) (interface{}, *response.Error) {
+	txHash, err := params.Value(0).GetHash()
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	receipt, err := s.chain.GetReceipt(txHash)
+	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
+		return nil, response.NewRPCError("Failed to get receipt", err.Error(), err)
+	}
+	return receipt, nil
+}
+
+// Unsupported, there isn't uncle blocks in saiya
+func (s *Server) eth_getUncleByBlockHashAndIndex(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("There are no uncle blocks in saiya", errors.New("not supported"))
+}
+
+func (s *Server) eth_getCompilers(params request.Params) (interface{}, *response.Error) {
+	return "[]", nil
+}
+
+func (s *Server) eth_compileSolidity(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("No solidity compiler", errors.New("not supported"))
+}
+
+func (s *Server) eth_compileLLL(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("No LLL compiler", errors.New("not supported"))
+}
+
+func (s *Server) eth_compileSerpent(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("No Serpent compiler", errors.New("not supported"))
+}
+
+func (s *Server) eth_newFilter(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_newBlockFilter(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_newPendingTransactionFilter(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_uninstallFilter(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_getFilterChanges(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_getFilterLogs(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
+}
+
+func (s *Server) eth_getLogs(params request.Params) (interface{}, *response.Error) {
+	param := params.Value(0)
+	if param == nil {
+		return nil, response.ErrInvalidParams
+	}
+	data := []byte(param.RawMessage)
+	filter := &filters.LogFilter{}
+	err := json.Unmarshal(data, filter)
+	if err != nil {
+		return nil, response.ErrInvalidParams
+	}
+	logs, err := s.chain.GetLogs(filter)
+	if err != nil {
+		return nil, response.NewInternalServerError("Could not get logs", err)
+	}
+	return logs, nil
+}
+
+// Unsupported, saiya doesn't use POW
+func (s *Server) eth_getWork(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("We don't use POW", errors.New("not supported"))
+}
+
+// Unsupported, saiya doesn't use POW
+func (s *Server) eth_submitWork(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("We don't use POW", errors.New("not supported"))
+}
+
+// Unsupported, saiya doesn't use POW
+func (s *Server) eth_submitHashrate(params request.Params) (interface{}, *response.Error) {
+	return nil, response.NewInternalServerError("There is no hash rate", errors.New("not supported"))
+}
+
+// -- end eth api.
+
 func (s *Server) getBestBlockHash(_ request.Params) (interface{}, *response.Error) {
-	return "0x" + s.chain.CurrentBlockHash().StringLE(), nil
+	return "0x" + s.chain.CurrentBlockHash().String(), nil
 }
 
 func (s *Server) getBlockCount(_ request.Params) (interface{}, *response.Error) {
@@ -485,16 +1244,16 @@ func (s *Server) getConnectionCount(_ request.Params) (interface{}, *response.Er
 	return s.coreServer.PeerCount(), nil
 }
 
-func (s *Server) blockHashFromParam(param *request.Param) (util.Uint256, *response.Error) {
+func (s *Server) blockHashFromParam(param *request.Param) (common.Hash, *response.Error) {
 	var (
-		hash util.Uint256
+		hash common.Hash
 		err  error
 	)
 	if param == nil {
 		return hash, response.ErrInvalidParams
 	}
 
-	if hash, err = param.GetUint256(); err != nil {
+	if hash, err = param.GetHash(); err != nil {
 		num, respErr := s.blockHeightFromParam(param)
 		if respErr != nil {
 			return hash, respErr
@@ -511,9 +1270,9 @@ func (s *Server) getBlock(reqParams request.Params) (interface{}, *response.Erro
 		return nil, respErr
 	}
 
-	block, err := s.chain.GetBlock(hash)
+	block, err := s.chain.GetBlock(hash, true)
 	if err != nil {
-		return nil, response.NewRPCError(fmt.Sprintf("Problem locating block with hash: %s", hash), err.Error(), err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
 	}
 
 	if v, _ := reqParams.Value(1).GetBoolean(); v {
@@ -538,25 +1297,25 @@ func (s *Server) getVersion(_ request.Params) (interface{}, *response.Error) {
 	if err != nil {
 		return nil, response.NewInternalServerError("Cannot fetch tcp port", err)
 	}
-
+	validators, err := s.chain.GetCurrentValidators()
+	if err != nil {
+		return nil, response.NewInternalServerError("failed get current validators", err)
+	}
 	cfg := s.chain.GetConfig()
-	return &result.Version{
-		Magic:             s.network,
-		TCPPort:           port,
-		Nonce:             s.coreServer.ID(),
-		UserAgent:         s.coreServer.UserAgent,
-		StateRootInHeader: cfg.StateRootInHeader,
+	return result.Version{
+		ChainID:   s.chainId,
+		TCPPort:   port,
+		Nonce:     s.coreServer.ID(),
+		UserAgent: s.coreServer.UserAgent,
 		Protocol: result.Protocol{
-			AddressVersion:              address.NEO3Prefix,
-			Network:                     cfg.Magic,
+			ChainID:                     cfg.ChainID,
 			MillisecondsPerBlock:        cfg.SecondsPerBlock * 1000,
 			MaxTraceableBlocks:          cfg.MaxTraceableBlocks,
 			MaxValidUntilBlockIncrement: cfg.MaxValidUntilBlockIncrement,
 			MaxTransactionsPerBlock:     cfg.MaxTransactionsPerBlock,
 			MemoryPoolMaxTransactions:   cfg.MemPoolSize,
-			ValidatorsCount:             byte(cfg.GetNumOfCNs(s.chain.BlockHeight())),
+			ValidatorsCount:             byte(len(validators)),
 			InitialGasDistribution:      cfg.InitialGASSupply,
-			StateRootInHeader:           cfg.StateRootInHeader,
 		},
 	}, nil
 }
@@ -572,7 +1331,7 @@ func (s *Server) getPeers(_ request.Params) (interface{}, *response.Error) {
 func (s *Server) getRawMempool(reqParams request.Params) (interface{}, *response.Error) {
 	verbose, _ := reqParams.Value(0).GetBoolean()
 	mp := s.chain.GetMemPool()
-	hashList := make([]util.Uint256, 0)
+	hashList := make([]common.Hash, 0)
 	for _, item := range mp.GetVerifiedTransactions() {
 		hashList = append(hashList, item.Hash())
 	}
@@ -582,7 +1341,7 @@ func (s *Server) getRawMempool(reqParams request.Params) (interface{}, *response
 	return result.RawMempool{
 		Height:     s.chain.BlockHeight(),
 		Verified:   hashList,
-		Unverified: []util.Uint256{}, // avoid `null` result
+		Unverified: []common.Hash{}, // avoid `null` result
 	}, nil
 }
 
@@ -603,7 +1362,7 @@ func (s *Server) calculateNetworkFee(reqParams request.Params) (interface{}, *re
 	if len(reqParams) < 1 {
 		return 0, response.ErrInvalidParams
 	}
-	byteTx, err := reqParams[0].GetBytesBase64()
+	byteTx, err := reqParams[0].GetBytesHex()
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
@@ -611,508 +1370,16 @@ func (s *Server) calculateNetworkFee(reqParams request.Params) (interface{}, *re
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	hashablePart, err := tx.EncodeHashableFields()
+	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("failed to compute tx size: %w", err))
 	}
-	size := len(hashablePart) + io.GetVarSize(len(tx.Signers))
-	var (
-		ef     int64
-		netFee int64
-	)
-	for i, signer := range tx.Signers {
-		var verificationScript []byte
-		for _, w := range tx.Scripts {
-			if w.VerificationScript != nil && hash.Hash160(w.VerificationScript).Equals(signer.Account) {
-				// then it's a standard sig/multisig witness
-				verificationScript = w.VerificationScript
-				break
-			}
-		}
-		if verificationScript == nil { // then it still might be a contract-based verification
-			gasConsumed, err := s.chain.VerifyWitness(signer.Account, tx, &tx.Scripts[i], int64(s.config.MaxGasInvoke))
-			if err != nil {
-				return 0, response.NewRPCError(fmt.Sprintf("contract verification for signer #%d failed", i), err.Error(), err)
-			}
-			netFee += gasConsumed
-			size += io.GetVarSize([]byte{}) + // verification script is empty (contract-based witness)
-				io.GetVarSize(tx.Scripts[i].InvocationScript) // invocation script might not be empty (args for `verify`)
-			continue
-		}
-
-		if ef == 0 {
-			ef = s.chain.GetBaseExecFee()
-		}
-		fee, sizeDelta := fee.Calculate(ef, verificationScript)
-		netFee += fee
-		size += sizeDelta
-	}
-	fee := s.chain.FeePerByte()
-	netFee += int64(size) * fee
-	return result.NetworkFee{Value: netFee}, nil
-}
-
-// getApplicationLog returns the contract log based on the specified txid or blockid.
-func (s *Server) getApplicationLog(reqParams request.Params) (interface{}, *response.Error) {
-	hash, err := reqParams.Value(0).GetUint256()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-
-	trig := trigger.All
-	if len(reqParams) > 1 {
-		trigString, err := reqParams.Value(1).GetString()
-		if err != nil {
-			return nil, response.ErrInvalidParams
-		}
-		trig, err = trigger.FromString(trigString)
-		if err != nil {
-			return nil, response.ErrInvalidParams
-		}
-	}
-
-	appExecResults, err := s.chain.GetAppExecResults(hash, trigger.All)
-	if err != nil {
-		return nil, response.NewRPCError("Unknown transaction or block", "", err)
-	}
-	return result.NewApplicationLog(hash, appExecResults, trig), nil
-}
-
-func (s *Server) getNEP11Tokens(h util.Uint160, acc util.Uint160, bw *io.BufBinWriter) ([]stackitem.Item, error) {
-	item, finalize, err := s.invokeReadOnly(bw, h, "tokensOf", acc)
-	if err != nil {
-		return nil, err
-	}
-	defer finalize()
-	if (item.Type() == stackitem.InteropT) && iterator.IsIterator(item) {
-		vals, _ := iterator.Values(item, s.config.MaxNEP11Tokens)
-		return vals, nil
-	}
-	return nil, fmt.Errorf("invalid `tokensOf` result type %s", item.String())
-}
-
-func (s *Server) getNEP11Balances(ps request.Params) (interface{}, *response.Error) {
-	u, err := ps.Value(0).GetUint160FromAddressOrHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-
-	bs := &result.NEP11Balances{
-		Address:  address.Uint160ToString(u),
-		Balances: []result.NEP11AssetBalance{},
-	}
-	lastUpdated, err := s.chain.GetTokenLastUpdated(u)
-	if err != nil {
-		return nil, response.NewRPCError("Failed to get NEP-11 last updated block", err.Error(), err)
-	}
-	var count int
-	stateSyncPoint := lastUpdated[math.MinInt32]
-	bw := io.NewBufBinWriter()
-contract_loop:
-	for _, h := range s.chain.GetNEP11Contracts() {
-		toks, err := s.getNEP11Tokens(h, u, bw)
-		if err != nil {
-			continue
-		}
-		if len(toks) == 0 {
-			continue
-		}
-		cs := s.chain.GetContractState(h)
-		if cs == nil {
-			continue
-		}
-		isDivisible := (cs.Manifest.ABI.GetMethod("balanceOf", 2) != nil)
-		lub, ok := lastUpdated[cs.ID]
-		if !ok {
-			cfg := s.chain.GetConfig()
-			if !cfg.P2PStateExchangeExtensions && cfg.RemoveUntraceableBlocks {
-				return nil, response.NewInternalServerError(fmt.Sprintf("failed to get LastUpdatedBlock for balance of %s token", cs.Hash.StringLE()), errors.New("internal database inconsistency"))
-			}
-			lub = stateSyncPoint
-		}
-		bs.Balances = append(bs.Balances, result.NEP11AssetBalance{
-			Asset:  h,
-			Tokens: make([]result.NEP11TokenBalance, 0, len(toks)),
-		})
-		curAsset := &bs.Balances[len(bs.Balances)-1]
-		for i := range toks {
-			id, err := toks[i].TryBytes()
-			if err != nil || len(id) > storage.MaxStorageKeyLen {
-				continue
-			}
-			var amount = "1"
-			if isDivisible {
-				balance, err := s.getTokenBalance(h, u, id, bw)
-				if err != nil {
-					continue
-				}
-				if balance.Sign() == 0 {
-					continue
-				}
-				amount = balance.String()
-			}
-			count++
-			curAsset.Tokens = append(curAsset.Tokens, result.NEP11TokenBalance{
-				ID:          hex.EncodeToString(id),
-				Amount:      amount,
-				LastUpdated: lub,
-			})
-			if count >= s.config.MaxNEP11Tokens {
-				break contract_loop
-			}
-		}
-	}
-	return bs, nil
-}
-
-func (s *Server) invokeNEP11Properties(h util.Uint160, id []byte, bw *io.BufBinWriter) ([]stackitem.MapElement, error) {
-	item, finalize, err := s.invokeReadOnly(bw, h, "properties", id)
-	if err != nil {
-		return nil, err
-	}
-	defer finalize()
-	if item.Type() != stackitem.MapT {
-		return nil, fmt.Errorf("invalid `properties` result type %s", item.String())
-	}
-	return item.Value().([]stackitem.MapElement), nil
-}
-
-func (s *Server) getNEP11Properties(ps request.Params) (interface{}, *response.Error) {
-	asset, err := ps.Value(0).GetUint160FromAddressOrHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-	token, err := ps.Value(1).GetBytesHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-	props, err := s.invokeNEP11Properties(asset, token, nil)
-	if err != nil {
-		return nil, response.NewRPCError("failed to get NEP-11 properties", err.Error(), err)
-	}
-	res := make(map[string]interface{})
-	for _, kv := range props {
-		key, err := kv.Key.TryBytes()
-		if err != nil {
-			continue
-		}
-		var val interface{}
-		if result.KnownNEP11Properties[string(key)] || kv.Value.Type() != stackitem.AnyT {
-			v, err := kv.Value.TryBytes()
-			if err != nil {
-				continue
-			}
-			if result.KnownNEP11Properties[string(key)] {
-				val = string(v)
-			} else {
-				val = v
-			}
-		}
-		res[string(key)] = val
-	}
-	return res, nil
-}
-
-func (s *Server) getNEP17Balances(ps request.Params) (interface{}, *response.Error) {
-	u, err := ps.Value(0).GetUint160FromAddressOrHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-
-	bs := &result.NEP17Balances{
-		Address:  address.Uint160ToString(u),
-		Balances: []result.NEP17Balance{},
-	}
-	lastUpdated, err := s.chain.GetTokenLastUpdated(u)
-	if err != nil {
-		return nil, response.NewRPCError("Failed to get NEP-17 last updated block", err.Error(), err)
-	}
-	stateSyncPoint := lastUpdated[math.MinInt32]
-	bw := io.NewBufBinWriter()
-	for _, h := range s.chain.GetNEP17Contracts() {
-		balance, err := s.getTokenBalance(h, u, nil, bw)
-		if err != nil {
-			continue
-		}
-		if balance.Sign() == 0 {
-			continue
-		}
-		cs := s.chain.GetContractState(h)
-		if cs == nil {
-			continue
-		}
-		lub, ok := lastUpdated[cs.ID]
-		if !ok {
-			cfg := s.chain.GetConfig()
-			if !cfg.P2PStateExchangeExtensions && cfg.RemoveUntraceableBlocks {
-				return nil, response.NewInternalServerError(fmt.Sprintf("failed to get LastUpdatedBlock for balance of %s token", cs.Hash.StringLE()), errors.New("internal database inconsistency"))
-			}
-			lub = stateSyncPoint
-		}
-		bs.Balances = append(bs.Balances, result.NEP17Balance{
-			Asset:       h,
-			Amount:      balance.String(),
-			LastUpdated: lub,
-		})
-	}
-	return bs, nil
-}
-
-func (s *Server) invokeReadOnly(bw *io.BufBinWriter, h util.Uint160, method string, params ...interface{}) (stackitem.Item, func(), error) {
-	if bw == nil {
-		bw = io.NewBufBinWriter()
-	} else {
-		bw.Reset()
-	}
-	emit.AppCall(bw.BinWriter, h, method, callflag.ReadStates|callflag.AllowCall, params...)
-	if bw.Err != nil {
-		return nil, nil, fmt.Errorf("failed to create `%s` invocation script: %w", method, bw.Err)
-	}
-	script := bw.Bytes()
-	tx := &transaction.Transaction{Script: script}
-	b, err := s.getFakeNextBlock(s.chain.BlockHeight() + 1)
-	if err != nil {
-		return nil, nil, err
-	}
-	ic := s.chain.GetTestVM(trigger.Application, tx, b)
-	ic.VM.GasLimit = core.HeaderVerificationGasLimit
-	ic.VM.LoadScriptWithFlags(script, callflag.All)
-	err = ic.VM.Run()
-	if err != nil {
-		ic.Finalize()
-		return nil, nil, fmt.Errorf("failed to run `%s` for %s: %w", method, h.StringLE(), err)
-	}
-	if ic.VM.Estack().Len() != 1 {
-		ic.Finalize()
-		return nil, nil, fmt.Errorf("invalid `%s` return values count: expected 1, got %d", method, ic.VM.Estack().Len())
-	}
-	return ic.VM.Estack().Pop().Item(), ic.Finalize, nil
-}
-
-func (s *Server) getTokenBalance(h util.Uint160, acc util.Uint160, id []byte, bw *io.BufBinWriter) (*big.Int, error) {
-	var (
-		item     stackitem.Item
-		finalize func()
-		err      error
-	)
-	if id == nil { // NEP-17 and NEP-11 generic.
-		item, finalize, err = s.invokeReadOnly(bw, h, "balanceOf", acc)
-	} else { // NEP-11 divisible.
-		item, finalize, err = s.invokeReadOnly(bw, h, "balanceOf", acc, id)
-	}
-	if err != nil {
-		return nil, err
-	}
-	finalize()
-	res, err := item.TryInteger()
-	if err != nil {
-		return nil, fmt.Errorf("unexpected `balanceOf` result type: %w", err)
-	}
-	return res, nil
-}
-
-func getTimestampsAndLimit(ps request.Params, index int) (uint64, uint64, int, int, error) {
-	var start, end uint64
-	var limit, page int
-
-	limit = maxTransfersLimit
-	pStart, pEnd, pLimit, pPage := ps.Value(index), ps.Value(index+1), ps.Value(index+2), ps.Value(index+3)
-	if pPage != nil {
-		p, err := pPage.GetInt()
-		if err != nil {
-			return 0, 0, 0, 0, err
-		}
-		if p < 0 {
-			return 0, 0, 0, 0, errors.New("can't use negative page")
-		}
-		page = p
-	}
-	if pLimit != nil {
-		l, err := pLimit.GetInt()
-		if err != nil {
-			return 0, 0, 0, 0, err
-		}
-		if l <= 0 {
-			return 0, 0, 0, 0, errors.New("can't use negative or zero limit")
-		}
-		if l > maxTransfersLimit {
-			return 0, 0, 0, 0, errors.New("too big limit requested")
-		}
-		limit = l
-	}
-	if pEnd != nil {
-		val, err := pEnd.GetInt()
-		if err != nil {
-			return 0, 0, 0, 0, err
-		}
-		end = uint64(val)
-	} else {
-		end = uint64(time.Now().Unix() * 1000)
-	}
-	if pStart != nil {
-		val, err := pStart.GetInt()
-		if err != nil {
-			return 0, 0, 0, 0, err
-		}
-		start = uint64(val)
-	} else {
-		start = uint64(time.Now().Add(-time.Hour*24*7).Unix() * 1000)
-	}
-	return start, end, limit, page, nil
-}
-
-func (s *Server) getNEP11Transfers(ps request.Params) (interface{}, *response.Error) {
-	return s.getTokenTransfers(ps, true)
-}
-
-func (s *Server) getNEP17Transfers(ps request.Params) (interface{}, *response.Error) {
-	return s.getTokenTransfers(ps, false)
-}
-
-func (s *Server) getTokenTransfers(ps request.Params, isNEP11 bool) (interface{}, *response.Error) {
-	u, err := ps.Value(0).GetUint160FromAddressOrHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-
-	start, end, limit, page, err := getTimestampsAndLimit(ps, 1)
-	if err != nil {
-		return nil, response.NewInvalidParamsError(err.Error(), err)
-	}
-
-	bs := &tokenTransfers{
-		Address:  address.Uint160ToString(u),
-		Received: []interface{}{},
-		Sent:     []interface{}{},
-	}
-	cache := make(map[int32]util.Uint160)
-	var resCount, frameCount int
-	// handleTransfer returns items to be added into the received and sent arrays
-	// along with a continue flag and error.
-	var handleTransfer = func(tr *state.NEP17Transfer) (*result.NEP17Transfer, *result.NEP17Transfer, bool, error) {
-		var received, sent *result.NEP17Transfer
-
-		// Iterating from the newest to the oldest, not yet reached required
-		// time frame, continue looping.
-		if tr.Timestamp > end {
-			return nil, nil, true, nil
-		}
-		// Iterating from the newest to the oldest, moved past required
-		// time frame, stop looping.
-		if tr.Timestamp < start {
-			return nil, nil, false, nil
-		}
-		frameCount++
-		// Using limits, not yet reached required page.
-		if limit != 0 && page*limit >= frameCount {
-			return nil, nil, true, nil
-		}
-
-		h, err := s.getHash(tr.Asset, cache)
-		if err != nil {
-			return nil, nil, false, err
-		}
-
-		transfer := result.NEP17Transfer{
-			Timestamp: tr.Timestamp,
-			Asset:     h,
-			Index:     tr.Block,
-			TxHash:    tr.Tx,
-		}
-		if tr.Amount.Sign() > 0 { // token was received
-			transfer.Amount = tr.Amount.String()
-			if !tr.From.Equals(util.Uint160{}) {
-				transfer.Address = address.Uint160ToString(tr.From)
-			}
-			received = &result.NEP17Transfer{}
-			*received = transfer // Make a copy, transfer is to be modified below.
-		} else {
-			transfer.Amount = new(big.Int).Neg(&tr.Amount).String()
-			if !tr.To.Equals(util.Uint160{}) {
-				transfer.Address = address.Uint160ToString(tr.To)
-			}
-			sent = &result.NEP17Transfer{}
-			*sent = transfer
-		}
-
-		resCount++
-		// Check limits for continue flag.
-		return received, sent, !(limit != 0 && resCount >= limit), nil
-	}
-	if !isNEP11 {
-		err = s.chain.ForEachNEP17Transfer(u, end, func(tr *state.NEP17Transfer) (bool, error) {
-			r, s, res, err := handleTransfer(tr)
-			if err == nil {
-				if r != nil {
-					bs.Received = append(bs.Received, r)
-				}
-				if s != nil {
-					bs.Sent = append(bs.Sent, s)
-				}
-			}
-			return res, err
-		})
-	} else {
-		err = s.chain.ForEachNEP11Transfer(u, end, func(tr *state.NEP11Transfer) (bool, error) {
-			r, s, res, err := handleTransfer(&tr.NEP17Transfer)
-			if err == nil {
-				id := hex.EncodeToString(tr.ID)
-				if r != nil {
-					bs.Received = append(bs.Received, nep17TransferToNEP11(r, id))
-				}
-				if s != nil {
-					bs.Sent = append(bs.Sent, nep17TransferToNEP11(s, id))
-				}
-			}
-			return res, err
-		})
-	}
-	if err != nil {
-		return nil, response.NewInternalServerError(fmt.Sprintf("invalid transfer log: %v", err), err)
-	}
-	return bs, nil
-}
-
-// getHash returns the hash of the contract by its ID using cache.
-func (s *Server) getHash(contractID int32, cache map[int32]util.Uint160) (util.Uint160, error) {
-	if d, ok := cache[contractID]; ok {
-		return d, nil
-	}
-	h, err := s.chain.GetContractScriptHash(contractID)
-	if err != nil {
-		return util.Uint160{}, err
-	}
-	cache[contractID] = h
-	return h, nil
-}
-
-func (s *Server) contractIDFromParam(param *request.Param) (int32, *response.Error) {
-	var result int32
-	if param == nil {
-		return 0, response.ErrInvalidParams
-	}
-	if scriptHash, err := param.GetUint160FromHex(); err == nil {
-		cs := s.chain.GetContractState(scriptHash)
-		if cs == nil {
-			return 0, response.ErrUnknown
-		}
-		result = cs.ID
-	} else {
-		id, err := param.GetInt()
-		if err != nil {
-			return 0, response.ErrInvalidParams
-		}
-		if err := checkInt32(id); err != nil {
-			return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
-		}
-		result = int32(id)
-	}
-	return result, nil
+	return result.NetworkFee{Value: netfee}, nil
 }
 
 // getContractScriptHashFromParam returns the contract script hash by hex contract hash, address, id or native contract name.
-func (s *Server) contractScriptHashFromParam(param *request.Param) (util.Uint160, *response.Error) {
-	var result util.Uint160
+func (s *Server) contractScriptHashFromParam(param *request.Param) (common.Address, *response.Error) {
+	var result common.Address
 	if param == nil {
 		return result, response.ErrInvalidParams
 	}
@@ -1120,7 +1387,7 @@ func (s *Server) contractScriptHashFromParam(param *request.Param) (util.Uint160
 	if err != nil {
 		return result, response.ErrInvalidParams
 	}
-	result, err = param.GetUint160FromAddressOrHex()
+	result, err = param.GetAddressFromHex()
 	if err == nil {
 		return result, nil
 	}
@@ -1135,17 +1402,13 @@ func (s *Server) contractScriptHashFromParam(param *request.Param) (util.Uint160
 	if err := checkInt32(id); err != nil {
 		return result, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	result, err = s.chain.GetContractScriptHash(int32(id))
-	if err != nil {
-		return result, response.NewRPCError("Unknown contract", "", err)
-	}
 	return result, nil
 }
 
-func makeStorageKey(id int32, key []byte) []byte {
-	skey := make([]byte, 4+len(key))
-	binary.LittleEndian.PutUint32(skey, uint32(id))
-	copy(skey[4:], key)
+func makeStorageKey(hash common.Address, key []byte) []byte {
+	skey := make([]byte, 20+len(key))
+	copy(skey, hash.Bytes())
+	copy(skey[20:], key)
 	return skey
 }
 
@@ -1155,15 +1418,15 @@ func (s *Server) getProof(ps request.Params) (interface{}, *response.Error) {
 	if s.chain.GetConfig().KeepOnlyLatestState {
 		return nil, response.NewInvalidRequestError("'getproof' is not supported", errKeepOnlyLatestState)
 	}
-	root, err := ps.Value(0).GetUint256()
+	root, err := ps.Value(0).GetHash()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
-	sc, err := ps.Value(1).GetUint160FromHex()
+	sc, err := ps.Value(1).GetAddressFromHex()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
-	key, err := ps.Value(2).GetBytesBase64()
+	key, err := ps.Value(2).GetBytesHex()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -1171,7 +1434,7 @@ func (s *Server) getProof(ps request.Params) (interface{}, *response.Error) {
 	if respErr != nil {
 		return nil, respErr
 	}
-	skey := makeStorageKey(cs.ID, key)
+	skey := makeStorageKey(cs.Address, key)
 	proof, err := s.chain.GetStateModule().GetStateProof(root, skey)
 	if err != nil {
 		return nil, response.NewInternalServerError("failed to get proof", err)
@@ -1186,7 +1449,7 @@ func (s *Server) verifyProof(ps request.Params) (interface{}, *response.Error) {
 	if s.chain.GetConfig().KeepOnlyLatestState {
 		return nil, response.NewInvalidRequestError("'verifyproof' is not supported", errKeepOnlyLatestState)
 	}
-	root, err := ps.Value(0).GetUint256()
+	root, err := ps.Value(0).GetHash()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -1207,7 +1470,7 @@ func (s *Server) verifyProof(ps request.Params) (interface{}, *response.Error) {
 }
 
 func (s *Server) getState(ps request.Params) (interface{}, *response.Error) {
-	root, err := ps.Value(0).GetUint256()
+	root, err := ps.Value(0).GetHash()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, errors.New("invalid stateroot"))
 	}
@@ -1216,15 +1479,15 @@ func (s *Server) getState(ps request.Params) (interface{}, *response.Error) {
 		if err != nil {
 			return nil, response.NewInternalServerError("failed to get current stateroot", err)
 		}
-		if !curr.Root.Equals(root) {
+		if curr.Root != root {
 			return nil, response.NewInvalidRequestError("'getstate' is not supported for old states", errKeepOnlyLatestState)
 		}
 	}
-	csHash, err := ps.Value(1).GetUint160FromHex()
+	csHash, err := ps.Value(1).GetAddressFromHex()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, errors.New("invalid contract hash"))
 	}
-	key, err := ps.Value(2).GetBytesBase64()
+	key, err := ps.Value(2).GetBytesHex()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, errors.New("invalid key"))
 	}
@@ -1232,16 +1495,16 @@ func (s *Server) getState(ps request.Params) (interface{}, *response.Error) {
 	if respErr != nil {
 		return nil, respErr
 	}
-	sKey := makeStorageKey(cs.ID, key)
+	sKey := makeStorageKey(cs.Address, key)
 	res, err := s.chain.GetStateModule().GetState(root, sKey)
 	if err != nil {
-		return nil, response.NewRPCError("failed to get historical item state", err.Error(), err)
+		return nil, response.NewInternalServerError("failed to get historical item state", err)
 	}
 	return res, nil
 }
 
 func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
-	root, err := ps.Value(0).GetUint256()
+	root, err := ps.Value(0).GetHash()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, errors.New("invalid stateroot"))
 	}
@@ -1250,15 +1513,15 @@ func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
 		if err != nil {
 			return nil, response.NewInternalServerError("failed to get current stateroot", err)
 		}
-		if !curr.Root.Equals(root) {
+		if curr.Root != root {
 			return nil, response.NewInvalidRequestError("'findstates' is not supported for old states", errKeepOnlyLatestState)
 		}
 	}
-	csHash, err := ps.Value(1).GetUint160FromHex()
+	csHash, err := ps.Value(1).GetAddressFromHex()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("invalid contract hash: %w", err))
 	}
-	prefix, err := ps.Value(2).GetBytesBase64()
+	prefix, err := ps.Value(2).GetBytesHex()
 	if err != nil {
 		return nil, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("invalid prefix: %w", err))
 	}
@@ -1267,7 +1530,7 @@ func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
 		count = s.config.MaxFindResultItems
 	)
 	if len(ps) > 3 {
-		key, err = ps.Value(3).GetBytesBase64()
+		key, err = ps.Value(3).GetBytesHex()
 		if err != nil {
 			return nil, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("invalid key: %w", err))
 		}
@@ -1294,7 +1557,7 @@ func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
 	if respErr != nil {
 		return nil, respErr
 	}
-	pKey := makeStorageKey(cs.ID, prefix)
+	pKey := makeStorageKey(cs.Address, prefix)
 	kvs, err := s.chain.GetStateModule().FindStates(root, pKey, key, count+1) // +1 to define result truncation
 	if err != nil {
 		return nil, response.NewInternalServerError("failed to find historical items", err)
@@ -1317,7 +1580,7 @@ func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
 	if len(kvs) > 1 {
 		proof, err := s.chain.GetStateModule().GetStateProof(root, kvs[len(kvs)-1].Key)
 		if err != nil {
-			return nil, response.NewInternalServerError("failed to get last proof", err)
+			return nil, response.NewInternalServerError("failed to get first proof", err)
 		}
 		res.LastProof = &result.ProofWithKey{
 			Key:   kvs[len(kvs)-1].Key,
@@ -1334,26 +1597,20 @@ func (s *Server) findStates(ps request.Params) (interface{}, *response.Error) {
 	return res, nil
 }
 
-func (s *Server) getHistoricalContractState(root util.Uint256, csHash util.Uint160) (*state.Contract, *response.Error) {
-	csKey := makeStorageKey(native.ManagementContractID, native.MakeContractKey(csHash))
+func (s *Server) getHistoricalContractState(root common.Hash, csHash common.Address) (*state.Contract, *response.Error) {
+	csKey := makeStorageKey(native.ManagementAddress, native.MakeContractKey(csHash))
 	csBytes, err := s.chain.GetStateModule().GetState(root, csKey)
 	if err != nil {
-		return nil, response.NewRPCError("failed to get historical contract state", err.Error(), err)
+		return nil, response.NewInternalServerError("failed to get historical contract state", err)
 	}
 	contract := new(state.Contract)
-	err = stackitem.DeserializeConvertible(csBytes, contract)
-	if err != nil {
-		return nil, response.NewInternalServerError("failed to deserialize historical contract state", err)
-	}
-	return contract, nil
+	err = io.FromByteArray(contract, csBytes)
+	return contract, response.NewRPCError("Failed get contract state", "", err)
 }
 
 func (s *Server) getStateHeight(_ request.Params) (interface{}, *response.Error) {
 	var height = s.chain.BlockHeight()
 	var stateHeight = s.chain.GetStateModule().CurrentValidatedHeight()
-	if s.chain.GetConfig().StateRootInHeader {
-		stateHeight = height - 1
-	}
 	return &result.StateHeight{
 		Local:     height,
 		Validated: stateHeight,
@@ -1363,17 +1620,17 @@ func (s *Server) getStateHeight(_ request.Params) (interface{}, *response.Error)
 func (s *Server) getStateRoot(ps request.Params) (interface{}, *response.Error) {
 	p := ps.Value(0)
 	if p == nil {
-		return nil, response.NewInvalidParamsError("Invalid parameter.", errors.New("missing stateroot identifier "))
+		return nil, response.NewRPCError("Invalid parameter.", "", nil)
 	}
 	var rt *state.MPTRoot
-	var h util.Uint256
+	var h common.Hash
 	height, err := p.GetIntStrict()
 	if err == nil {
 		if err := checkUint32(height); err != nil {
 			return nil, response.WrapErrorWithData(response.ErrInvalidParams, err)
 		}
 		rt, err = s.chain.GetStateModule().GetStateRoot(uint32(height))
-	} else if h, err = p.GetUint256(); err == nil {
+	} else if h, err = p.GetHash(); err == nil {
 		var hdr *block.Header
 		hdr, err = s.chain.GetHeader(h)
 		if err == nil {
@@ -1387,7 +1644,7 @@ func (s *Server) getStateRoot(ps request.Params) (interface{}, *response.Error) 
 }
 
 func (s *Server) getStorage(ps request.Params) (interface{}, *response.Error) {
-	id, rErr := s.contractIDFromParam(ps.Value(0))
+	hash, rErr := s.contractScriptHashFromParam(ps.Value(0))
 	if rErr == response.ErrUnknown {
 		return nil, nil
 	}
@@ -1395,12 +1652,12 @@ func (s *Server) getStorage(ps request.Params) (interface{}, *response.Error) {
 		return nil, rErr
 	}
 
-	key, err := ps.Value(1).GetBytesBase64()
+	key, err := ps.Value(1).GetBytesHex()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
 
-	item := s.chain.GetStorageItem(id, key)
+	item := s.chain.GetStorageItem(hash, key)
 	if item == nil {
 		return "", nil
 	}
@@ -1409,7 +1666,7 @@ func (s *Server) getStorage(ps request.Params) (interface{}, *response.Error) {
 }
 
 func (s *Server) getrawtransaction(reqParams request.Params) (interface{}, *response.Error) {
-	txHash, err := reqParams.Value(0).GetUint256()
+	txHash, err := reqParams.Value(0).GetHash()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -1420,34 +1677,38 @@ func (s *Server) getrawtransaction(reqParams request.Params) (interface{}, *resp
 	}
 	if v, _ := reqParams.Value(1).GetBoolean(); v {
 		if height == math.MaxUint32 {
-			return result.NewTransactionOutputRaw(tx, nil, nil, s.chain), nil
+			return result.NewTransactionOutputRaw(tx, nil, nil), nil
 		}
 		_header := s.chain.GetHeaderHash(int(height))
 		header, err := s.chain.GetHeader(_header)
 		if err != nil {
 			return nil, response.NewRPCError("Failed to get header for the transaction", err.Error(), err)
 		}
-		aers, err := s.chain.GetAppExecResults(txHash, trigger.Application)
+		aer, err := s.chain.GetReceipt(txHash)
 		if err != nil {
 			return nil, response.NewRPCError("Failed to get application log for the transaction", err.Error(), err)
 		}
-		if len(aers) == 0 {
-			return nil, response.NewRPCError("Application log for the transaction is empty", "", errors.New("inconsistent application log"))
+		if aer == nil {
+			return nil, response.NewRPCError("Application log for the transaction is empty", "", nil)
 		}
-		return result.NewTransactionOutputRaw(tx, header, &aers[0], s.chain), nil
+		return result.NewTransactionOutputRaw(tx, header, aer), nil
 	}
-	return tx.Bytes(), nil
+	b, err := tx.Bytes()
+	if err != nil {
+		return nil, response.NewInternalServerError("failed encode tx", err)
+	}
+	return b, nil
 }
 
 func (s *Server) getTransactionHeight(ps request.Params) (interface{}, *response.Error) {
-	h, err := ps.Value(0).GetUint256()
+	h, err := ps.Value(0).GetHash()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
 
 	_, height, err := s.chain.GetTransaction(h)
 	if err != nil || height == math.MaxUint32 {
-		return nil, response.NewRPCError("Unknown transaction", "", errors.New("transaction not found"))
+		return nil, response.NewRPCError("Unknown transaction", "", nil)
 	}
 
 	return height, nil
@@ -1462,9 +1723,13 @@ func (s *Server) getContractState(reqParams request.Params) (interface{}, *respo
 	}
 	cs := s.chain.GetContractState(scriptHash)
 	if cs == nil {
-		return nil, response.NewRPCError("Unknown contract", "", errors.New("contract not found"))
+		return nil, response.NewRPCError("Unknown contract", "", nil)
 	}
 	return cs, nil
+}
+
+func (s *Server) getFeePerByte(_ request.Params) (interface{}, *response.Error) {
+	return s.chain.GetFeePerByte(), nil
 }
 
 func (s *Server) getNativeContracts(_ request.Params) (interface{}, *response.Error) {
@@ -1475,18 +1740,18 @@ func (s *Server) getNativeContracts(_ request.Params) (interface{}, *response.Er
 func (s *Server) getBlockSysFee(reqParams request.Params) (interface{}, *response.Error) {
 	num, err := s.blockHeightFromParam(reqParams.Value(0))
 	if err != nil {
-		return 0, response.NewRPCError("Invalid height", "", errors.New("invalid block identifier"))
+		return 0, response.NewRPCError("Invalid height", "", nil)
 	}
 
 	headerHash := s.chain.GetHeaderHash(num)
-	block, errBlock := s.chain.GetBlock(headerHash)
+	block, errBlock := s.chain.GetBlock(headerHash, true)
 	if errBlock != nil {
-		return 0, response.NewRPCError(errBlock.Error(), "", errors.New("unknown block"))
+		return 0, response.NewRPCError(errBlock.Error(), "", nil)
 	}
 
-	var blockSysFee int64
+	var blockSysFee uint64
 	for _, tx := range block.Transactions {
-		blockSysFee += tx.SystemFee
+		blockSysFee += tx.Gas()
 	}
 
 	return blockSysFee, nil
@@ -1503,7 +1768,7 @@ func (s *Server) getBlockHeader(reqParams request.Params) (interface{}, *respons
 	verbose, _ := reqParams.Value(1).GetBoolean()
 	h, err := s.chain.GetHeader(hash)
 	if err != nil {
-		return nil, response.NewRPCError("unknown block", "", errors.New("unknown header"))
+		return nil, response.NewRPCError("unknown block", "", nil)
 	}
 
 	if verbose {
@@ -1518,53 +1783,16 @@ func (s *Server) getBlockHeader(reqParams request.Params) (interface{}, *respons
 	return buf.Bytes(), nil
 }
 
-// getUnclaimedGas returns unclaimed GAS amount of the specified address.
-func (s *Server) getUnclaimedGas(ps request.Params) (interface{}, *response.Error) {
-	u, err := ps.Value(0).GetUint160FromAddressOrHex()
-	if err != nil {
-		return nil, response.ErrInvalidParams
-	}
-
-	neo, _ := s.chain.GetGoverningTokenBalance(u)
-	if neo.Sign() == 0 {
-		return result.UnclaimedGas{
-			Address: u,
-		}, nil
-	}
-	gas, err := s.chain.CalculateClaimable(u, s.chain.BlockHeight()+1) // +1 as in C#, for the next block.
-	if err != nil {
-		return nil, response.NewRPCError("can't calculate claimable", err.Error(), err)
-	}
-	return result.UnclaimedGas{
-		Address:   u,
-		Unclaimed: *gas,
-	}, nil
-}
-
 // getNextBlockValidators returns validators for the next block with voting status.
-func (s *Server) getNextBlockValidators(_ request.Params) (interface{}, *response.Error) {
-	var validators keys.PublicKeys
-
-	validators, err := s.chain.GetNextBlockValidators()
+func (s *Server) getValidators(_ request.Params) (interface{}, *response.Error) {
+	validators, err := s.chain.GetCurrentValidators()
 	if err != nil {
-		return nil, response.NewRPCError("can't get next block validators", "", err)
+		return nil, response.NewInternalServerError("Failed to get validators", err)
 	}
-	enrollments, err := s.chain.GetEnrollments()
-	if err != nil {
-		return nil, response.NewRPCError("can't get enrollments", "", err)
-	}
-	var res = make([]result.Validator, 0)
-	for _, v := range enrollments {
-		res = append(res, result.Validator{
-			PublicKey: *v.Key,
-			Votes:     v.Votes.Int64(),
-			Active:    validators.Contains(v.Key),
-		})
-	}
-	return res, nil
+	return validators, nil
 }
 
-// getCommittee returns the current list of NEO committee members.
+// getCommittee returns the current list of saiya committee members.
 func (s *Server) getCommittee(_ request.Params) (interface{}, *response.Error) {
 	keys, err := s.chain.GetCommittee()
 	if err != nil {
@@ -1573,336 +1801,32 @@ func (s *Server) getCommittee(_ request.Params) (interface{}, *response.Error) {
 	return keys, nil
 }
 
-// invokeFunction implements the `invokeFunction` RPC call.
-func (s *Server) invokeFunction(reqParams request.Params) (interface{}, *response.Error) {
-	tx, verbose, respErr := s.getInvokeFunctionParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
+func (s *Server) getCommitteeAddress(_ request.Params) (interface{}, *response.Error) {
+	addr, err := s.chain.GetCommitteeAddress()
+	if err != nil {
+		return nil, response.NewInternalServerError("can't get committee members", err)
 	}
-	return s.runScriptInVM(trigger.Application, tx.Script, util.Uint160{}, tx, nil, verbose)
+	return addr, nil
 }
 
-// invokeFunctionHistoric implements the `invokeFunctionHistoric` RPC call.
-func (s *Server) invokeFunctionHistoric(reqParams request.Params) (interface{}, *response.Error) {
-	b, respErr := s.getHistoricParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
-	}
-	if len(reqParams) < 2 {
+func (s *Server) isBlocked(reqParams request.Params) (interface{}, *response.Error) {
+	para1 := reqParams.Value(0)
+	if para1 == nil {
 		return nil, response.ErrInvalidParams
 	}
-	tx, verbose, respErr := s.getInvokeFunctionParams(reqParams[1:])
-	if respErr != nil {
-		return nil, respErr
-	}
-	return s.runScriptInVM(trigger.Application, tx.Script, util.Uint160{}, tx, b, verbose)
-}
-
-func (s *Server) getInvokeFunctionParams(reqParams request.Params) (*transaction.Transaction, bool, *response.Error) {
-	if len(reqParams) < 2 {
-		return nil, false, response.ErrInvalidParams
-	}
-	scriptHash, responseErr := s.contractScriptHashFromParam(reqParams.Value(0))
-	if responseErr != nil {
-		return nil, false, responseErr
-	}
-	method, err := reqParams[1].GetString()
+	addr, err := para1.GetAddressFromHex()
 	if err != nil {
-		return nil, false, response.ErrInvalidParams
+		return nil, response.NewInternalServerError("can't parse address", err)
 	}
-	var params *request.Param
-	if len(reqParams) > 2 {
-		params = &reqParams[2]
-	}
-	tx := &transaction.Transaction{}
-	if len(reqParams) > 3 {
-		signers, _, err := reqParams[3].GetSignersWithWitnesses()
-		if err != nil {
-			return nil, false, response.ErrInvalidParams
-		}
-		tx.Signers = signers
-	}
-	var verbose bool
-	if len(reqParams) > 4 {
-		verbose, err = reqParams[4].GetBoolean()
-		if err != nil {
-			return nil, false, response.ErrInvalidParams
-		}
-	}
-	if len(tx.Signers) == 0 {
-		tx.Signers = []transaction.Signer{{Account: util.Uint160{}, Scopes: transaction.None}}
-	}
-	script, err := request.CreateFunctionInvocationScript(scriptHash, method, params)
-	if err != nil {
-		return nil, false, response.NewInternalServerError("can't create invocation script", err)
-	}
-	tx.Script = script
-	return tx, verbose, nil
-}
-
-// invokescript implements the `invokescript` RPC call.
-func (s *Server) invokescript(reqParams request.Params) (interface{}, *response.Error) {
-	tx, verbose, respErr := s.getInvokeScriptParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
-	}
-	return s.runScriptInVM(trigger.Application, tx.Script, util.Uint160{}, tx, nil, verbose)
-}
-
-// invokescripthistoric implements the `invokescripthistoric` RPC call.
-func (s *Server) invokescripthistoric(reqParams request.Params) (interface{}, *response.Error) {
-	b, respErr := s.getHistoricParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
-	}
-	if len(reqParams) < 2 {
-		return nil, response.ErrInvalidParams
-	}
-	tx, verbose, respErr := s.getInvokeScriptParams(reqParams[1:])
-	if respErr != nil {
-		return nil, respErr
-	}
-	return s.runScriptInVM(trigger.Application, tx.Script, util.Uint160{}, tx, b, verbose)
-}
-
-func (s *Server) getInvokeScriptParams(reqParams request.Params) (*transaction.Transaction, bool, *response.Error) {
-	script, err := reqParams.Value(0).GetBytesBase64()
-	if err != nil {
-		return nil, false, response.ErrInvalidParams
-	}
-
-	tx := &transaction.Transaction{}
-	if len(reqParams) > 1 {
-		signers, witnesses, err := reqParams[1].GetSignersWithWitnesses()
-		if err != nil {
-			return nil, false, response.WrapErrorWithData(response.ErrInvalidParams, err)
-		}
-		tx.Signers = signers
-		tx.Scripts = witnesses
-	}
-	var verbose bool
-	if len(reqParams) > 2 {
-		verbose, err = reqParams[2].GetBoolean()
-		if err != nil {
-			return nil, false, response.WrapErrorWithData(response.ErrInvalidParams, err)
-		}
-	}
-	if len(tx.Signers) == 0 {
-		tx.Signers = []transaction.Signer{{Account: util.Uint160{}, Scopes: transaction.None}}
-	}
-	tx.Script = script
-	return tx, verbose, nil
-}
-
-// invokeContractVerify implements the `invokecontractverify` RPC call.
-func (s *Server) invokeContractVerify(reqParams request.Params) (interface{}, *response.Error) {
-	scriptHash, tx, invocationScript, respErr := s.getInvokeContractVerifyParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
-	}
-	return s.runScriptInVM(trigger.Verification, invocationScript, scriptHash, tx, nil, false)
-}
-
-// invokeContractVerifyHistoric implements the `invokecontractverifyhistoric` RPC call.
-func (s *Server) invokeContractVerifyHistoric(reqParams request.Params) (interface{}, *response.Error) {
-	b, respErr := s.getHistoricParams(reqParams)
-	if respErr != nil {
-		return nil, respErr
-	}
-	if len(reqParams) < 2 {
-		return nil, response.ErrInvalidParams
-	}
-	scriptHash, tx, invocationScript, respErr := s.getInvokeContractVerifyParams(reqParams[1:])
-	if respErr != nil {
-		return nil, respErr
-	}
-	return s.runScriptInVM(trigger.Verification, invocationScript, scriptHash, tx, b, false)
-}
-
-func (s *Server) getInvokeContractVerifyParams(reqParams request.Params) (util.Uint160, *transaction.Transaction, []byte, *response.Error) {
-	scriptHash, responseErr := s.contractScriptHashFromParam(reqParams.Value(0))
-	if responseErr != nil {
-		return util.Uint160{}, nil, nil, responseErr
-	}
-
-	bw := io.NewBufBinWriter()
-	if len(reqParams) > 1 {
-		args, err := reqParams[1].GetArray() // second `invokecontractverify` parameter is an array of arguments for `verify` method
-		if err != nil {
-			return util.Uint160{}, nil, nil, response.WrapErrorWithData(response.ErrInvalidParams, err)
-		}
-		if len(args) > 0 {
-			err := request.ExpandArrayIntoScript(bw.BinWriter, args)
-			if err != nil {
-				return util.Uint160{}, nil, nil, response.NewInternalServerError("can't create witness invocation script", err)
-			}
-		}
-	}
-	invocationScript := bw.Bytes()
-
-	tx := &transaction.Transaction{Script: []byte{byte(opcode.RET)}} // need something in script
-	if len(reqParams) > 2 {
-		signers, witnesses, err := reqParams[2].GetSignersWithWitnesses()
-		if err != nil {
-			return util.Uint160{}, nil, nil, response.ErrInvalidParams
-		}
-		tx.Signers = signers
-		tx.Scripts = witnesses
-	} else { // fill the only known signer - the contract with `verify` method
-		tx.Signers = []transaction.Signer{{Account: scriptHash}}
-		tx.Scripts = []transaction.Witness{{InvocationScript: invocationScript, VerificationScript: []byte{}}}
-	}
-	return scriptHash, tx, invocationScript, nil
-}
-
-// getHistoricParams checks that historic calls are supported and returns fake block
-// with the specified index to perform the historic call. It also checks that
-// specified stateroot is stored at the specified height for further request
-// handling consistency.
-func (s *Server) getHistoricParams(reqParams request.Params) (*block.Block, *response.Error) {
-	if s.chain.GetConfig().KeepOnlyLatestState {
-		return nil, response.NewInvalidRequestError("only latest state is supported", errKeepOnlyLatestState)
-	}
-	if len(reqParams) < 1 {
-		return nil, response.ErrInvalidParams
-	}
-	height, respErr := s.blockHeightFromParam(reqParams.Value(0))
-	if respErr != nil {
-		hash, err := reqParams.Value(0).GetUint256()
-		if err != nil {
-			return nil, response.NewInvalidParamsError("invalid block hash or index or stateroot hash", err)
-		}
-		b, err := s.chain.GetBlock(hash)
-		if err != nil {
-			stateH, err := s.chain.GetStateModule().GetLatestStateHeight(hash)
-			if err != nil {
-				return nil, response.NewInvalidParamsError(fmt.Sprintf("unknown block or stateroot: %s", err), err)
-			}
-			height = int(stateH)
-		} else {
-			height = int(b.Index)
-		}
-	}
-	b, err := s.getFakeNextBlock(uint32(height))
-	if err != nil {
-		return nil, response.NewInternalServerError(fmt.Sprintf("can't create fake block for height %d: %s", height, err.Error()), err)
-	}
-	return b, nil
-}
-
-func (s *Server) getFakeNextBlock(nextBlockHeight uint32) (*block.Block, error) {
-	// When transferring funds, script execution does no auto GAS claim,
-	// because it depends on persisting tx height.
-	// This is why we provide block here.
-	b := block.New(s.stateRootEnabled)
-	b.Index = nextBlockHeight
-	hdr, err := s.chain.GetHeader(s.chain.GetHeaderHash(int(nextBlockHeight - 1)))
-	if err != nil {
-		return nil, err
-	}
-	b.Timestamp = hdr.Timestamp + uint64(s.chain.GetConfig().SecondsPerBlock*int(time.Second/time.Millisecond))
-	return b, nil
-}
-
-// runScriptInVM runs the given script in a new test VM and returns the invocation
-// result. The script is either a simple script in case of `application` trigger,
-// witness invocation script in case of `verification` trigger (it pushes `verify`
-// arguments on stack before verification). In case of contract verification
-// contractScriptHash should be specified.
-func (s *Server) runScriptInVM(t trigger.Type, script []byte, contractScriptHash util.Uint160, tx *transaction.Transaction, b *block.Block, verbose bool) (*result.Invoke, *response.Error) {
-	var (
-		err error
-		ic  *interop.Context
-	)
-	if b == nil {
-		b, err = s.getFakeNextBlock(s.chain.BlockHeight() + 1)
-		if err != nil {
-			return nil, response.NewInternalServerError("can't create fake block", err)
-		}
-		ic = s.chain.GetTestVM(t, tx, b)
-	} else {
-		ic, err = s.chain.GetTestHistoricVM(t, tx, b)
-		if err != nil {
-			return nil, response.NewInternalServerError("failed to create historic VM", err)
-		}
-	}
-	if verbose {
-		ic.VM.EnableInvocationTree()
-	}
-	ic.VM.GasLimit = int64(s.config.MaxGasInvoke)
-	if t == trigger.Verification {
-		// We need this special case because witnesses verification is not the simple System.Contract.Call,
-		// and we need to define exactly the amount of gas consumed for a contract witness verification.
-		gasPolicy := s.chain.GetMaxVerificationGAS()
-		if ic.VM.GasLimit > gasPolicy {
-			ic.VM.GasLimit = gasPolicy
-		}
-
-		err = s.chain.InitVerificationContext(ic, contractScriptHash, &transaction.Witness{InvocationScript: script, VerificationScript: []byte{}})
-		if err != nil {
-			return nil, response.NewInternalServerError(fmt.Sprintf("can't prepare verification VM: %s", err.Error()), err)
-		}
-	} else {
-		ic.VM.LoadScriptWithFlags(script, callflag.All)
-	}
-	err = ic.VM.Run()
-	var faultException string
-	if err != nil {
-		faultException = err.Error()
-	}
-	return result.NewInvoke(ic, script, faultException, s.config.MaxIteratorResultItems), nil
-}
-
-// submitBlock broadcasts a raw block over the NEO network.
-func (s *Server) submitBlock(reqParams request.Params) (interface{}, *response.Error) {
-	blockBytes, err := reqParams.Value(0).GetBytesBase64()
-	if err != nil {
-		return nil, response.NewInvalidParamsError("missing parameter or not base64", err)
-	}
-	b := block.New(s.stateRootEnabled)
-	r := io.NewBinReaderFromBuf(blockBytes)
-	b.DecodeBinary(r)
-	if r.Err != nil {
-		return nil, response.NewInvalidParamsError("can't decode block", r.Err)
-	}
-	err = s.chain.AddBlock(b)
-	if err != nil {
-		switch {
-		case errors.Is(err, core.ErrInvalidBlockIndex) || errors.Is(err, core.ErrAlreadyExists):
-			return nil, response.WrapErrorWithData(response.ErrAlreadyExists, err)
-		default:
-			return nil, response.WrapErrorWithData(response.ErrValidationFailed, err)
-		}
-	}
-	return &result.RelayResult{
-		Hash: b.Hash(),
-	}, nil
-}
-
-// submitNotaryRequest broadcasts P2PNotaryRequest over the NEO network.
-func (s *Server) submitNotaryRequest(ps request.Params) (interface{}, *response.Error) {
-	if !s.chain.P2PSigExtensionsEnabled() {
-		return nil, response.NewRPCError("P2PNotaryRequest was received, but P2PSignatureExtensions are disabled", "", errors.New("P2PSignatureExtensions are disabled"))
-	}
-
-	bytePayload, err := ps.Value(0).GetBytesBase64()
-	if err != nil {
-		return nil, response.NewInvalidParamsError("not base64", err)
-	}
-	r, err := payload.NewP2PNotaryRequestFromBytes(bytePayload)
-	if err != nil {
-		return nil, response.NewInvalidParamsError("can't decode notary payload", err)
-	}
-	return getRelayResult(s.coreServer.RelayP2PNotaryRequest(r), r.FallbackTransaction.Hash())
+	r := s.chain.IsBlocked(addr)
+	return r, nil
 }
 
 // getRelayResult returns successful relay result or an error.
-func getRelayResult(err error, hash util.Uint256) (interface{}, *response.Error) {
+func getRelayResult(err error, hash common.Hash) (interface{}, *response.Error) {
 	switch {
 	case err == nil:
-		return result.RelayResult{
-			Hash: hash,
-		}, nil
+		return hash, nil
 	case errors.Is(err, core.ErrAlreadyExists):
 		return nil, response.WrapErrorWithData(response.ErrAlreadyExists, err)
 	case errors.Is(err, core.ErrOOM):
@@ -1914,50 +1838,20 @@ func getRelayResult(err error, hash util.Uint256) (interface{}, *response.Error)
 	}
 }
 
-func (s *Server) submitOracleResponse(ps request.Params) (interface{}, *response.Error) {
-	if s.oracle == nil {
-		return nil, response.NewRPCError("oracle is not enabled", "", errors.New("oracle service is disabled"))
-	}
-	var pub *keys.PublicKey
-	pubBytes, err := ps.Value(0).GetBytesBase64()
-	if err == nil {
-		pub, err = keys.NewPublicKeyFromBytes(pubBytes, elliptic.P256())
-	}
-	if err != nil {
-		return nil, response.NewInvalidParamsError("public key is missing", err)
-	}
-	reqID, err := ps.Value(1).GetInt()
-	if err != nil {
-		return nil, response.NewInvalidParamsError("request ID is missing", err)
-	}
-	txSig, err := ps.Value(2).GetBytesBase64()
-	if err != nil {
-		return nil, response.NewInvalidParamsError("tx signature is missing", err)
-	}
-	msgSig, err := ps.Value(3).GetBytesBase64()
-	if err != nil {
-		return nil, response.NewInvalidParamsError("msg signature is missing", err)
-	}
-	data := broadcaster.GetMessage(pubBytes, uint64(reqID), txSig)
-	if !pub.Verify(msgSig, hash.Sha256(data).BytesBE()) {
-		return nil, response.NewRPCError("Invalid sign", "", errors.New("invalid request signature"))
-	}
-	s.oracle.AddResponse(pub, uint64(reqID), txSig)
-	return json.RawMessage([]byte("{}")), nil
-}
-
 func (s *Server) sendrawtransaction(reqParams request.Params) (interface{}, *response.Error) {
 	if len(reqParams) < 1 {
-		return nil, response.NewInvalidParamsError("not enough parameters", errors.New("invalid parameters"))
+		return nil, response.NewInvalidParamsError("not enough parameters", nil)
 	}
-	byteTx, err := reqParams[0].GetBytesBase64()
+	byteTx, err := reqParams[0].GetBytesHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("not base64", err)
+		return nil, response.NewInvalidParamsError("not hex", err)
 	}
-	tx, err := transaction.NewTransactionFromBytes(byteTx)
+	saiyaTx, err := transaction.NewSaiyaTxFromBytes(byteTx)
 	if err != nil {
+		fmt.Println(err)
 		return nil, response.NewInvalidParamsError("can't decode transaction", err)
 	}
+	tx := transaction.NewTx(saiyaTx)
 	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
 }
 
@@ -1970,9 +1864,6 @@ func (s *Server) subscribe(reqParams request.Params, sub *subscriber) (interface
 	event, err := response.GetEventIDFromString(streamName)
 	if err != nil || event == response.MissedEventID {
 		return nil, response.ErrInvalidParams
-	}
-	if event == response.NotaryRequestEventID && !s.chain.P2PSigExtensionsEnabled() {
-		return nil, response.WrapErrorWithData(response.ErrInvalidParams, errors.New("P2PSigExtensions are disabled"))
 	}
 	// Optional filter.
 	var filter interface{}
@@ -1996,7 +1887,7 @@ func (s *Server) subscribe(reqParams request.Params, sub *subscriber) (interface
 		case response.ExecutionEventID:
 			flt := new(request.ExecutionFilter)
 			err = jd.Decode(flt)
-			if err == nil && (flt.State == "HALT" || flt.State == "FAULT") {
+			if err == nil && (flt.State == 1 || flt.State == 0) {
 				filter = *flt
 			} else if err == nil {
 				err = errors.New("invalid state")
@@ -2011,8 +1902,7 @@ func (s *Server) subscribe(reqParams request.Params, sub *subscriber) (interface
 	defer s.subsLock.Unlock()
 	select {
 	case <-s.shutdown:
-		err = errors.New("server is shutting down")
-		return nil, response.NewInternalServerError(err.Error(), err)
+		return nil, response.NewInternalServerError("server is shutting down", nil)
 	default:
 	}
 	var id int
@@ -2022,7 +1912,7 @@ func (s *Server) subscribe(reqParams request.Params, sub *subscriber) (interface
 		}
 	}
 	if id == len(sub.feeds) {
-		return nil, response.NewInternalServerError("maximum number of subscriptions is reached", fmt.Errorf("%d subscriptions are allowed at max", len(sub.feeds)))
+		return nil, response.NewInternalServerError("maximum number of subscriptions is reached", nil)
 	}
 	sub.feeds[id].event = event
 	sub.feeds[id].filter = filter
@@ -2055,11 +1945,6 @@ func (s *Server) subscribeToChannel(event response.EventID) {
 			s.chain.SubscribeForExecutions(s.executionCh)
 		}
 		s.executionSubs++
-	case response.NotaryRequestEventID:
-		if s.notaryRequestSubs == 0 {
-			s.coreServer.SubscribeForNotaryRequests(s.notaryRequestCh)
-		}
-		s.notaryRequestSubs++
 	}
 }
 
@@ -2106,11 +1991,6 @@ func (s *Server) unsubscribeFromChannel(event response.EventID) {
 		if s.executionSubs == 0 {
 			s.chain.UnsubscribeFromExecutions(s.executionCh)
 		}
-	case response.NotaryRequestEventID:
-		s.notaryRequestSubs--
-		if s.notaryRequestSubs == 0 {
-			s.coreServer.UnsubscribeFromNotaryRequests(s.notaryRequestCh)
-		}
 	}
 }
 
@@ -2151,12 +2031,6 @@ chloop:
 		case tx := <-s.transactionCh:
 			resp.Event = response.TransactionEventID
 			resp.Payload[0] = tx
-		case e := <-s.notaryRequestCh:
-			resp.Event = response.NotaryRequestEventID
-			resp.Payload[0] = &subscriptions.NotaryRequestEvent{
-				Type:          e.Type,
-				NotaryRequest: e.Data.(*payload.P2PNotaryRequest),
-			}
 		}
 		s.subsLock.RLock()
 	subloop:
@@ -2209,9 +2083,6 @@ chloop:
 	s.chain.UnsubscribeFromTransactions(s.transactionCh)
 	s.chain.UnsubscribeFromNotifications(s.notificationCh)
 	s.chain.UnsubscribeFromExecutions(s.executionCh)
-	if s.chain.P2PSigExtensionsEnabled() {
-		s.coreServer.UnsubscribeFromNotaryRequests(s.notaryRequestCh)
-	}
 	s.subsLock.Unlock()
 drainloop:
 	for {
@@ -2220,7 +2091,6 @@ drainloop:
 		case <-s.executionCh:
 		case <-s.notificationCh:
 		case <-s.transactionCh:
-		case <-s.notaryRequestCh:
 		default:
 			break drainloop
 		}
@@ -2231,7 +2101,6 @@ drainloop:
 	close(s.transactionCh)
 	close(s.notificationCh)
 	close(s.executionCh)
-	close(s.notaryRequestCh)
 }
 
 func (s *Server) blockHeightFromParam(param *request.Param) (int, *response.Error) {
@@ -2275,13 +2144,7 @@ func (s *Server) logRequestError(r *request.Request, jsonErr *response.Error) {
 		logFields = append(logFields, zap.Any("params", params))
 	}
 
-	logText := "Error encountered with rpc request"
-	switch jsonErr.Code {
-	case response.InternalServerErrorCode:
-		s.log.Error(logText, logFields...)
-	default:
-		s.log.Info(logText, logFields...)
-	}
+	s.log.Error("Error encountered with rpc request", logFields...)
 }
 
 // writeHTTPErrorResponse writes an error response to the ResponseWriter.
@@ -2323,21 +2186,10 @@ func (s *Server) writeHTTPServerResponse(r *request.Request, w http.ResponseWrit
 	}
 }
 
-// validateAddress verifies that the address is a correct NEO address
-// see https://docs.neo.org/en-us/node/cli/2.9.4/api/validateaddress.html
 func validateAddress(addr interface{}) bool {
 	if addr, ok := addr.(string); ok {
-		_, err := address.StringToUint160(addr)
+		_, err := address.Base58ToAddress(addr)
 		return err == nil
 	}
 	return false
-}
-
-func escapeForLog(in string) string {
-	return strings.Map(func(c rune) rune {
-		if !strconv.IsGraphic(c) {
-			return -1
-		}
-		return c
-	}, in)
 }

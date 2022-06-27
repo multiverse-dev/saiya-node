@@ -10,7 +10,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Number of connected peers",
 			Name:      "peers_connected",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 
@@ -18,7 +18,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Server and Node versions",
 			Name:      "serv_node_version",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 		[]string{"description", "value"},
 	)
@@ -27,7 +27,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Number of available node addresses",
 			Name:      "pool_count",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 
@@ -35,7 +35,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Block queue length",
 			Name:      "block_queue_length",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 )

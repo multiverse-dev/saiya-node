@@ -9,7 +9,8 @@ import (
 
 // KeyPrefix constants.
 const (
-	DataExecutable KeyPrefix = 0x01
+	DataTx    KeyPrefix = 0x01
+	DataBlock KeyPrefix = 0x02
 	// DataMPT is used for MPT node entries identified by Uint256.
 	DataMPT KeyPrefix = 0x03
 	// DataMPTAux is used to store additional MPT data like height-root
@@ -22,22 +23,15 @@ const (
 	// STStorage prefix. Once state exchange process is completed, all items with
 	// STStorage prefix will be replaced with STTempStorage-prefixed ones.
 	STTempStorage                  KeyPrefix = 0x71
-	STNEP11Transfers               KeyPrefix = 0x72
-	STNEP17Transfers               KeyPrefix = 0x73
+	STERC721Transfers              KeyPrefix = 0x72
+	STERC20Transfers               KeyPrefix = 0x73
 	STTokenTransferInfo            KeyPrefix = 0x74
 	IXHeaderHashList               KeyPrefix = 0x80
 	SYSCurrentBlock                KeyPrefix = 0xc0
 	SYSCurrentHeader               KeyPrefix = 0xc1
 	SYSStateSyncCurrentBlockHeight KeyPrefix = 0xc2
 	SYSStateSyncPoint              KeyPrefix = 0xc3
-	SYSStateJumpStage              KeyPrefix = 0xc4
 	SYSVersion                     KeyPrefix = 0xf0
-)
-
-// Executable subtypes.
-const (
-	ExecBlock       byte = 1
-	ExecTransaction byte = 2
 )
 
 const (
@@ -86,6 +80,7 @@ type (
 	// layer most of the time.
 	Store interface {
 		Get([]byte) ([]byte, error)
+		Put([]byte, []byte) error
 		// PutChangeSet allows to push prepared changeset to the Store.
 		PutChangeSet(puts map[string][]byte, stor map[string][]byte) error
 		// Seek can guarantee that provided key (k) and value (v) are the only valid until the next call to f.

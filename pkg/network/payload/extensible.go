@@ -3,35 +3,35 @@ package payload
 import (
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const maxExtensibleCategorySize = 32
 
-// Extensible represents a payload containing arbitrary data.
+// Extensible represents payload containing arbitrary data.
 type Extensible struct {
-	// Category is the payload type.
+	// Category is payload type.
 	Category string
-	// ValidBlockStart is the starting height for a payload to be valid.
+	// ValidBlockStart is starting height for payload to be valid.
 	ValidBlockStart uint32
-	// ValidBlockEnd is the height after which a payload becomes invalid.
+	// ValidBlockEnd is height after which payload becomes invalid.
 	ValidBlockEnd uint32
-	// Sender is the payload sender or signer.
-	Sender util.Uint160
+	// Sender is payload sender or signer.
+	Sender common.Address
 	// Data is custom payload data.
 	Data []byte
 	// Witness is payload witness.
 	Witness transaction.Witness
 
-	hash util.Uint256
+	hash common.Hash
 }
 
 var errInvalidPadding = errors.New("invalid padding")
 
-// NewExtensible creates a new extensible payload.
+// NewExtensible creates new extensible payload.
 func NewExtensible() *Extensible {
 	return &Extensible{}
 }
@@ -73,8 +73,8 @@ func (e *Extensible) DecodeBinary(r *io.BinReader) {
 }
 
 // Hash returns payload hash.
-func (e *Extensible) Hash() util.Uint256 {
-	if e.hash.Equals(util.Uint256{}) {
+func (e *Extensible) Hash() common.Hash {
+	if e.hash == (common.Hash{}) {
 		e.createHash()
 	}
 	return e.hash
@@ -84,5 +84,5 @@ func (e *Extensible) Hash() util.Uint256 {
 func (e *Extensible) createHash() {
 	buf := io.NewBufBinWriter()
 	e.encodeBinaryUnsigned(buf.BinWriter)
-	e.hash = hash.Sha256(buf.Bytes())
+	e.hash = hash.Keccak256(buf.Bytes())
 }

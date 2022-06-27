@@ -3,7 +3,7 @@ package hash
 import (
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // MerkleTree implementation.
@@ -12,8 +12,8 @@ type MerkleTree struct {
 	depth int
 }
 
-// NewMerkleTree returns a new MerkleTree object.
-func NewMerkleTree(hashes []util.Uint256) (*MerkleTree, error) {
+// NewMerkleTree returns new MerkleTree object.
+func NewMerkleTree(hashes []common.Hash) (*MerkleTree, error) {
 	if len(hashes) == 0 {
 		return nil, errors.New("length of the hashes cannot be zero")
 	}
@@ -32,7 +32,7 @@ func NewMerkleTree(hashes []util.Uint256) (*MerkleTree, error) {
 }
 
 // Root returns the computed root hash of the MerkleTree.
-func (t *MerkleTree) Root() util.Uint256 {
+func (t *MerkleTree) Root() common.Hash {
 	return t.root.hash
 }
 
@@ -57,23 +57,25 @@ func buildMerkleTree(leaves []*MerkleTreeNode) *MerkleTreeNode {
 			leaves[i*2+1].parent = parents[i]
 		}
 
-		b1 := parents[i].leftChild.hash.BytesBE()
-		b2 := parents[i].rightChild.hash.BytesBE()
+		b1 := parents[i].leftChild.hash.Bytes()
+		b2 := parents[i].rightChild.hash.Bytes()
 		b1 = append(b1, b2...)
-		parents[i].hash = DoubleSha256(b1)
+		parents[i].hash = DoubleKeccak256(b1)
 	}
 
 	return buildMerkleTree(parents)
 }
 
-// CalcMerkleRoot calculates the Merkle root hash value for the given slice of hashes.
-// It doesn't create a full MerkleTree structure and it uses the given slice as a
+// CalcMerkleRoot calculcates Merkle root hash value for a given slice of hashes.
+// It doesn't create a full MerkleTree structure and it uses given slice as a
 // scratchpad, so it will destroy its contents in the process. But it's much more
-// memory efficient if you only need a root hash value. While NewMerkleTree would
-// make 3*N allocations for N hashes, this function will only make 4.
-func CalcMerkleRoot(hashes []util.Uint256) util.Uint256 {
+// memory efficient if you only need root hash value, while NewMerkleTree would
+// make 3*N allocations for N hashes, this function will only make 4. It also is
+// an error to call this function for zero-length hashes slice, the function will
+// panic.
+func CalcMerkleRoot(hashes []common.Hash) common.Hash {
 	if len(hashes) == 0 {
-		return util.Uint256{}
+		return common.Hash{}
 	}
 	if len(hashes) == 1 {
 		return hashes[0]
@@ -82,15 +84,15 @@ func CalcMerkleRoot(hashes []util.Uint256) util.Uint256 {
 	scratch := make([]byte, 64)
 	parents := hashes[:(len(hashes)+1)/2]
 	for i := 0; i < len(parents); i++ {
-		copy(scratch, hashes[i*2].BytesBE())
+		copy(scratch, hashes[i*2].Bytes())
 
 		if i*2+1 == len(hashes) {
-			copy(scratch[32:], hashes[i*2].BytesBE())
+			copy(scratch[32:], hashes[i*2].Bytes())
 		} else {
-			copy(scratch[32:], hashes[i*2+1].BytesBE())
+			copy(scratch[32:], hashes[i*2+1].Bytes())
 		}
 
-		parents[i] = DoubleSha256(scratch)
+		parents[i] = DoubleKeccak256(scratch)
 	}
 
 	return CalcMerkleRoot(parents)
@@ -98,7 +100,7 @@ func CalcMerkleRoot(hashes []util.Uint256) util.Uint256 {
 
 // MerkleTreeNode represents a node in the MerkleTree.
 type MerkleTreeNode struct {
-	hash       util.Uint256
+	hash       common.Hash
 	parent     *MerkleTreeNode
 	leftChild  *MerkleTreeNode
 	rightChild *MerkleTreeNode

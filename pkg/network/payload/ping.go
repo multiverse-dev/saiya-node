@@ -3,7 +3,7 @@ package payload
 import (
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // Ping payload for ping/pong payloads.
@@ -25,14 +25,14 @@ func NewPing(blockIndex uint32, nonce uint32) *Ping {
 	}
 }
 
-// DecodeBinary implements the Serializable interface.
+// DecodeBinary implements Serializable interface.
 func (p *Ping) DecodeBinary(br *io.BinReader) {
 	p.LastBlockIndex = br.ReadU32LE()
 	p.Timestamp = br.ReadU32LE()
 	p.Nonce = br.ReadU32LE()
 }
 
-// EncodeBinary implements the Serializable interface.
+// EncodeBinary implements Serializable interface.
 func (p *Ping) EncodeBinary(bw *io.BinWriter) {
 	bw.WriteU32LE(p.LastBlockIndex)
 	bw.WriteU32LE(p.Timestamp)

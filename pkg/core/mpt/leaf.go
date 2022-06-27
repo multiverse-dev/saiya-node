@@ -5,15 +5,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// MaxValueLength is the max length of a leaf node value.
+// MaxValueLength is a max length of a leaf node value.
 const MaxValueLength = 3 + storage.MaxStorageValueLen + 1
 
-// LeafNode represents an MPT's leaf node.
+// LeafNode represents MPT's leaf node.
 type LeafNode struct {
 	BaseNode
 	value []byte
@@ -21,7 +21,7 @@ type LeafNode struct {
 
 var _ Node = (*LeafNode)(nil)
 
-// NewLeafNode returns a hash node with the specified value.
+// NewLeafNode returns hash node with the specified value.
 func NewLeafNode(value []byte) *LeafNode {
 	return &LeafNode{value: value}
 }
@@ -30,7 +30,7 @@ func NewLeafNode(value []byte) *LeafNode {
 func (n LeafNode) Type() NodeType { return LeafT }
 
 // Hash implements BaseNode interface.
-func (n *LeafNode) Hash() util.Uint256 {
+func (n *LeafNode) Hash() common.Hash {
 	return n.getHash(n)
 }
 
@@ -61,12 +61,12 @@ func (n *LeafNode) Size() int {
 	return io.GetVarSize(len(n.value)) + len(n.value)
 }
 
-// MarshalJSON implements the json.Marshaler.
+// MarshalJSON implements json.Marshaler.
 func (n *LeafNode) MarshalJSON() ([]byte, error) {
 	return []byte(`{"value":"` + hex.EncodeToString(n.value) + `"}`), nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (n *LeafNode) UnmarshalJSON(data []byte) error {
 	var obj NodeObject
 	if err := obj.UnmarshalJSON(data); err != nil {

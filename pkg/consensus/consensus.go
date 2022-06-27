@@ -6,41 +6,33 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nspcc-dev/dbft"
-	"github.com/nspcc-dev/dbft/block"
-	"github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	coreb "github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/blockchainer"
-	"github.com/nspcc-dev/neo-go/pkg/core/interop"
-	"github.com/nspcc-dev/neo-go/pkg/core/mempool"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/encoding/address"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	npayload "github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/emit"
-	"github.com/nspcc-dev/neo-go/pkg/wallet"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	coreb "github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/blockchainer"
+	"github.com/multiverse-dev/saiya/pkg/core/mempool"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	cc "github.com/multiverse-dev/saiya/pkg/crypto"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
+	"github.com/multiverse-dev/saiya/pkg/dbft"
+	"github.com/multiverse-dev/saiya/pkg/dbft/block"
+	"github.com/multiverse-dev/saiya/pkg/dbft/payload"
+	npayload "github.com/multiverse-dev/saiya/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // cacheMaxCapacity is the default cache capacity taken
-// from C# implementation https://github.com/neo-project/neo/blob/master/neo/Ledger/Blockchain.cs#L64
 const cacheMaxCapacity = 100
 
-// defaultTimePerBlock is a period between blocks which is used in NEO.
 const defaultTimePerBlock = 15 * time.Second
 
 // Number of nanoseconds in millisecond.
 const nsInMs = 1000000
 
-// Category is a message category for extensible payloads.
+// Category is message category for extensible payloads.
 const Category = "dBFT"
 
 // Ledger is the interface to Blockchain sufficient for Service.
@@ -49,31 +41,30 @@ type Ledger interface {
 	ApplyPolicyToTxSet([]*transaction.Transaction) []*transaction.Transaction
 	GetConfig() config.ProtocolConfiguration
 	GetMemPool() *mempool.Pool
-	GetNextBlockValidators() ([]*keys.PublicKey, error)
 	GetStateModule() blockchainer.StateRoot
-	GetTransaction(util.Uint256) (*transaction.Transaction, uint32, error)
-	GetValidators() ([]*keys.PublicKey, error)
+	GetTransaction(common.Hash) (*transaction.Transaction, uint32, error)
+	GetValidators(uint32) ([]*keys.PublicKey, error)
 	PoolTx(t *transaction.Transaction, pools ...*mempool.Pool) error
 	SubscribeForBlocks(ch chan<- *coreb.Block)
 	UnsubscribeFromBlocks(ch chan<- *coreb.Block)
-	GetBaseExecFee() int64
-	interop.Ledger
+	BlockHeight() uint32
+	CurrentBlockHash() common.Hash
+	GetBlock(hash common.Hash, full bool) (*coreb.Block, error)
+	GetHeaderHash(int) common.Hash
 	mempool.Feer
 }
 
-// Service represents a consensus instance.
+// Service represents consensus instance.
 type Service interface {
-	// Name returns service name.
-	Name() string
 	// Start initializes dBFT and starts event loop for consensus service.
-	// It must be called only when the sufficient amount of peers are connected.
+	// It must be called only when sufficient amount of peers are connected.
 	Start()
 	// Shutdown stops dBFT event loop.
 	Shutdown()
 
-	// OnPayload is a callback to notify the Service about a newly received payload.
+	// OnPayload is a callback to notify Service about new received payload.
 	OnPayload(p *npayload.Extensible) error
-	// OnTransaction is a callback to notify the Service about a newly received transaction.
+	// OnTransaction is a callback to notify Service about new received transaction.
 	OnTransaction(tx *transaction.Transaction)
 }
 
@@ -91,7 +82,7 @@ type service struct {
 	// blockEvents is used to pass a new block event to the consensus
 	// process.
 	blockEvents  chan *coreb.Block
-	lastProposal []util.Uint256
+	lastProposal []common.Hash
 	wallet       *wallet.Wallet
 	// started is a flag set with Start method that runs an event handling
 	// goroutine.
@@ -100,8 +91,8 @@ type service struct {
 	finished chan struct{}
 	// lastTimestamp contains timestamp for the last processed block.
 	// We can't rely on timestamp from dbft context because it is changed
-	// before the block is accepted. So, in case of change view, it will contain
-	// an updated value.
+	// before block is accepted, so in case of change view it will contain
+	// updated value.
 	lastTimestamp uint64
 }
 
@@ -109,23 +100,23 @@ type service struct {
 type Config struct {
 	// Logger is a logger instance.
 	Logger *zap.Logger
-	// Broadcast is a callback which is called to notify the server
-	// about a new consensus payload to be sent.
+	// Broadcast is a callback which is called to notify server
+	// about new consensus payload to sent.
 	Broadcast func(p *npayload.Extensible)
 	// Chain is a Ledger instance.
 	Chain Ledger
 	// ProtocolConfiguration contains protocol settings.
 	ProtocolConfiguration config.ProtocolConfiguration
 	// RequestTx is a callback to which will be called
-	// when a node lacks transactions present in the block.
-	RequestTx func(h ...util.Uint256)
-	// TimePerBlock is minimal time that should pass before the next block is accepted.
+	// when a node lacks transactions present in a block.
+	RequestTx func(h ...common.Hash)
+	// TimePerBlock minimal time that should pass before next block is accepted.
 	TimePerBlock time.Duration
 	// Wallet is a local-node wallet configuration.
 	Wallet *config.Wallet
 }
 
-// NewService returns a new consensus.Service instance.
+// NewService returns new consensus.Service instance.
 func NewService(cfg Config) (Service, error) {
 	if cfg.TimePerBlock <= 0 {
 		cfg.TimePerBlock = defaultTimePerBlock
@@ -155,7 +146,7 @@ func NewService(cfg Config) (Service, error) {
 		return nil, err
 	}
 
-	// Check that the wallet password is correct for at least one account.
+	// Check that wallet password is correct for at least one account.
 	var ok bool
 	for _, acc := range srv.wallet.Accounts {
 		err := acc.Decrypt(srv.Config.Wallet.Password, srv.wallet.Scrypt)
@@ -195,7 +186,7 @@ func NewService(cfg Config) (Service, error) {
 		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
 		dbft.WithNewRecoveryRequest(func() payload.RecoveryRequest { return new(recoveryRequest) }),
 		dbft.WithNewRecoveryMessage(func() payload.RecoveryMessage {
-			return &recoveryMessage{stateRootEnabled: srv.ProtocolConfiguration.StateRootInHeader}
+			return &recoveryMessage{}
 		}),
 		dbft.WithVerifyPrepareRequest(srv.verifyRequest),
 		dbft.WithVerifyPrepareResponse(func(_ payload.ConsensusPayload) error { return nil }),
@@ -210,24 +201,22 @@ func NewService(cfg Config) (Service, error) {
 
 var (
 	_ block.Transaction = (*transaction.Transaction)(nil)
-	_ block.Block       = (*neoBlock)(nil)
+	_ block.Block       = (*consensusBlock)(nil)
 )
 
-// NewPayload creates a new consensus payload for the provided network.
-func NewPayload(m netmode.Magic, stateRootEnabled bool) *Payload {
+// NewPayload creates new consensus payload for the provided network.
+func NewPayload(m uint64) *Payload {
 	return &Payload{
 		Extensible: npayload.Extensible{
 			Category: Category,
 		},
-		message: message{
-			stateRootEnabled: stateRootEnabled,
-		},
-		network: m,
+		message: message{},
+		chainId: m,
 	}
 }
 
 func (s *service) newPayload(c *dbft.Context, t payload.MessageType, msg interface{}) payload.ConsensusPayload {
-	cp := NewPayload(s.ProtocolConfiguration.Magic, s.ProtocolConfiguration.StateRootInHeader)
+	cp := NewPayload(s.ProtocolConfiguration.ChainID)
 	cp.SetHeight(c.BlockIndex)
 	cp.SetValidatorIndex(uint16(c.MyIndex))
 	cp.SetViewNumber(c.ViewNumber)
@@ -240,27 +229,14 @@ func (s *service) newPayload(c *dbft.Context, t payload.MessageType, msg interfa
 
 	cp.Extensible.ValidBlockStart = 0
 	cp.Extensible.ValidBlockEnd = c.BlockIndex
-	cp.Extensible.Sender = c.Validators[c.MyIndex].(*publicKey).GetScriptHash()
+	cp.Extensible.Sender = c.Validators[c.MyIndex].Address()
 
 	return cp
 }
 
 func (s *service) newPrepareRequest() payload.PrepareRequest {
 	r := new(prepareRequest)
-	if s.ProtocolConfiguration.StateRootInHeader {
-		r.stateRootEnabled = true
-		if sr, err := s.Chain.GetStateModule().GetStateRoot(s.dbft.BlockIndex - 1); err == nil {
-			r.stateRoot = sr.Root
-		} else {
-			panic(err)
-		}
-	}
 	return r
-}
-
-// Name returns service name.
-func (s *service) Name() string {
-	return "consensus"
 }
 
 func (s *service) Start() {
@@ -272,7 +248,7 @@ func (s *service) Start() {
 	}
 }
 
-// Shutdown implements the Service interface.
+// Shutdown implements Service interface.
 func (s *service) Shutdown() {
 	if s.started.Load() {
 		close(s.quit)
@@ -346,19 +322,19 @@ func (s *service) handleChainBlock(b *coreb.Block) {
 }
 
 func (s *service) validatePayload(p *Payload) bool {
-	validators := s.getValidators()
+	validators := s.getValidators(p.BlockIndex)
 	if int(p.message.ValidatorIndex) >= len(validators) {
 		return false
 	}
 
 	pub := validators[p.message.ValidatorIndex]
-	h := pub.(*publicKey).GetScriptHash()
+	h := pub.Address()
 	return p.Sender == h
 }
 
-func (s *service) getKeyPair(pubs []crypto.PublicKey) (int, crypto.PrivateKey, crypto.PublicKey) {
+func (s *service) getKeyPair(pubs []*keys.PublicKey) (int, *keys.PrivateKey, *keys.PublicKey) {
 	for i := range pubs {
-		sh := pubs[i].(*publicKey).GetScriptHash()
+		sh := pubs[i].Address()
 		acc := s.wallet.GetAccount(sh)
 		if acc == nil {
 			continue
@@ -368,13 +344,13 @@ func (s *service) getKeyPair(pubs []crypto.PublicKey) (int, crypto.PrivateKey, c
 		if acc.PrivateKey() == nil {
 			err := acc.Decrypt(s.Config.Wallet.Password, s.wallet.Scrypt)
 			if err != nil {
-				s.log.Fatal("can't unlock account", zap.String("address", address.Uint160ToString(sh)))
+				s.log.Fatal("can't unlock account", zap.String("address", sh.String()))
 				break
 			}
 			key = acc.PrivateKey()
 		}
 
-		return i, &privateKey{PrivateKey: key}, &publicKey{PublicKey: key.PublicKey()}
+		return i, key, key.PublicKey()
 	}
 
 	return -1, nil, nil
@@ -383,9 +359,7 @@ func (s *service) getKeyPair(pubs []crypto.PublicKey) (int, crypto.PrivateKey, c
 func (s *service) payloadFromExtensible(ep *npayload.Extensible) *Payload {
 	return &Payload{
 		Extensible: *ep,
-		message: message{
-			stateRootEnabled: s.ProtocolConfiguration.StateRootInHeader,
-		},
+		message:    message{},
 	}
 }
 
@@ -420,7 +394,7 @@ func (s *service) OnTransaction(tx *transaction.Transaction) {
 }
 
 func (s *service) broadcast(p payload.ConsensusPayload) {
-	if err := p.(*Payload).Sign(s.dbft.Priv.(*privateKey)); err != nil {
+	if err := p.(*Payload).Sign(s.dbft.Priv); err != nil {
 		s.log.Warn("can't sign consensus payload", zap.Error(err))
 	}
 
@@ -428,7 +402,7 @@ func (s *service) broadcast(p payload.ConsensusPayload) {
 	s.Config.Broadcast(ep)
 }
 
-func (s *service) getTx(h util.Uint256) block.Transaction {
+func (s *service) getTx(h common.Hash) block.Transaction {
 	if tx := s.txx.Get(h); tx != nil {
 		return tx.(*transaction.Transaction)
 	}
@@ -445,7 +419,7 @@ func (s *service) getTx(h util.Uint256) block.Transaction {
 }
 
 func (s *service) verifyBlock(b block.Block) bool {
-	coreb := &b.(*neoBlock).Block
+	coreb := &b.(*consensusBlock).Block
 
 	if s.Chain.BlockHeight() >= coreb.Index {
 		s.log.Warn("proposed block has already outdated")
@@ -466,13 +440,13 @@ func (s *service) verifyBlock(b block.Block) bool {
 		return false
 	}
 
-	var fee int64
+	var fee uint64
 	var pool = mempool.New(len(coreb.Transactions), 0, false)
 	var mainPool = s.Chain.GetMemPool()
 	for _, tx := range coreb.Transactions {
 		var err error
 
-		fee += tx.SystemFee
+		fee += tx.Gas()
 		if mainPool.ContainsKey(tx.Hash()) {
 			err = pool.Add(tx, s.Chain)
 			if err == nil {
@@ -507,7 +481,6 @@ func (s *service) verifyBlock(b block.Block) bool {
 var (
 	errInvalidPrevHash          = errors.New("invalid PrevHash")
 	errInvalidVersion           = errors.New("invalid Version")
-	errInvalidStateRoot         = errors.New("state root mismatch")
 	errInvalidTransactionsCount = errors.New("invalid transactions count")
 )
 
@@ -519,14 +492,6 @@ func (s *service) verifyRequest(p payload.ConsensusPayload) error {
 	if req.version != s.dbft.Version {
 		return errInvalidVersion
 	}
-	if s.ProtocolConfiguration.StateRootInHeader {
-		sr, err := s.Chain.GetStateModule().GetStateRoot(s.dbft.BlockIndex - 1)
-		if err != nil {
-			return err
-		} else if sr.Root != req.stateRoot {
-			return fmt.Errorf("%w: %s != %s", errInvalidStateRoot, sr.Root, req.stateRoot)
-		}
-	}
 	if len(req.TransactionHashes()) > int(s.ProtocolConfiguration.MaxTransactionsPerBlock) {
 		return fmt.Errorf("%w: max = %d, got %d", errInvalidTransactionsCount, s.ProtocolConfiguration.MaxTransactionsPerBlock, len(req.TransactionHashes()))
 	}
@@ -537,13 +502,13 @@ func (s *service) verifyRequest(p payload.ConsensusPayload) error {
 }
 
 func (s *service) processBlock(b block.Block) {
-	bb := &b.(*neoBlock).Block
-	bb.Script = *(s.getBlockWitness(bb))
+	bb := &b.(*consensusBlock).Block
+	bb.Witness = s.getBlockWitness(bb)
 
 	if err := s.Chain.AddBlock(bb); err != nil {
 		// The block might already be added via the regular network
 		// interaction.
-		if _, errget := s.Chain.GetBlock(bb.Hash()); errget != nil {
+		if _, errget := s.Chain.GetBlock(bb.Hash(), false); errget != nil {
 			s.log.Warn("error on add block", zap.Error(err))
 		}
 	}
@@ -557,47 +522,36 @@ func (s *service) postBlock(b *coreb.Block) {
 	s.lastProposal = nil
 }
 
-func (s *service) getBlockWitness(b *coreb.Block) *transaction.Witness {
+func (s *service) getBlockWitness(b *coreb.Block) transaction.Witness {
+	m := s.dbft.Context.M()
 	dctx := s.dbft.Context
-	pubs := convertKeys(dctx.Validators)
-	sigs := make(map[*keys.PublicKey][]byte)
-
+	pubs := dctx.Validators
+	sigs := make([][]byte, m)
+	sort.Sort(keys.PublicKeys(pubs))
+	j := 0
 	for i := range pubs {
 		if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
-			sigs[pubs[i]] = p.GetCommit().Signature()
-		}
-	}
-
-	m := s.dbft.Context.M()
-	verif, err := smartcontract.CreateMultiSigRedeemScript(m, pubs)
-	if err != nil {
-		s.log.Warn("can't create multisig redeem script", zap.Error(err))
-		return nil
-	}
-
-	sort.Sort(keys.PublicKeys(pubs))
-
-	buf := io.NewBufBinWriter()
-	for i, j := 0, 0; i < len(pubs) && j < m; i++ {
-		if sig, ok := sigs[pubs[i]]; ok {
-			emit.Bytes(buf.BinWriter, sig)
+			sigs[j] = p.GetCommit().Signature()
 			j++
+			if j == m {
+				break
+			}
 		}
 	}
-
-	return &transaction.Witness{
-		InvocationScript:   buf.Bytes(),
+	verif, _ := keys.PublicKeys(pubs).CreateDefaultMultiSigRedeemScript()
+	return transaction.Witness{
 		VerificationScript: verif,
+		InvocationScript:   cc.CreateMultiInvocationScript(sigs),
 	}
 }
 
-func (s *service) getBlock(h util.Uint256) block.Block {
-	b, err := s.Chain.GetBlock(h)
+func (s *service) getBlock(h common.Hash) block.Block {
+	b, err := s.Chain.GetBlock(h, false)
 	if err != nil {
 		return nil
 	}
 
-	return &neoBlock{network: s.ProtocolConfiguration.Magic, Block: *b}
+	return &consensusBlock{chainId: s.ProtocolConfiguration.ChainID, Block: *b}
 }
 
 func (s *service) getVerifiedTx() []block.Transaction {
@@ -632,80 +586,52 @@ func (s *service) getVerifiedTx() []block.Transaction {
 	return res
 }
 
-func (s *service) getValidators(txes ...block.Transaction) []crypto.PublicKey {
+func (s *service) getValidators(index uint32) []*keys.PublicKey {
 	var (
 		pKeys []*keys.PublicKey
 		err   error
 	)
-	if txes == nil {
-		pKeys, err = s.Chain.GetNextBlockValidators()
-	} else {
-		pKeys, err = s.Chain.GetValidators()
-	}
+
+	pKeys, err = s.Chain.GetValidators(index)
 	if err != nil {
 		s.log.Error("error while trying to get validators", zap.Error(err))
 	}
-
-	pubs := make([]crypto.PublicKey, len(pKeys))
-	for i := range pKeys {
-		pubs[i] = &publicKey{PublicKey: pKeys[i]}
-	}
-
-	return pubs
+	return pKeys
 }
 
-func (s *service) getConsensusAddress(validators ...crypto.PublicKey) util.Uint160 {
-	return util.Uint160{}
-}
-
-func convertKeys(validators []crypto.PublicKey) (pubs []*keys.PublicKey) {
-	pubs = make([]*keys.PublicKey, len(validators))
-	for i, k := range validators {
-		pubs[i] = k.(*publicKey).PublicKey
+func (s *service) getConsensusAddress(validators ...*keys.PublicKey) common.Address {
+	script, err := keys.PublicKeys(validators).CreateDefaultMultiSigRedeemScript()
+	if err != nil {
+		s.log.Fatal(fmt.Sprintf("failed to create multisignature script: %s", err.Error()))
 	}
-
-	return
+	return hash.Hash160(script)
 }
 
 func (s *service) newBlockFromContext(ctx *dbft.Context) block.Block {
-	block := &neoBlock{network: s.ProtocolConfiguration.Magic}
+	block := &consensusBlock{chainId: s.ProtocolConfiguration.ChainID}
 
 	block.Block.Timestamp = ctx.Timestamp / nsInMs
 	block.Block.Nonce = ctx.Nonce
 	block.Block.Index = ctx.BlockIndex
-	if s.ProtocolConfiguration.StateRootInHeader {
-		sr, err := s.Chain.GetStateModule().GetStateRoot(ctx.BlockIndex - 1)
-		if err != nil {
-			s.log.Fatal(fmt.Sprintf("failed to get state root: %s", err.Error()))
-		}
-		block.StateRootEnabled = true
-		block.PrevStateRoot = sr.Root
-	}
 
-	var validators keys.PublicKeys
-	var err error
-	cfg := s.Chain.GetConfig()
-	if cfg.ShouldUpdateCommitteeAt(ctx.BlockIndex) {
-		validators, err = s.Chain.GetValidators()
-	} else {
-		validators, err = s.Chain.GetNextBlockValidators()
-	}
+	block.Block.PrevHash = ctx.PrevHash
+	block.Block.Version = ctx.Version
+
+	validators, err := s.Chain.GetValidators(ctx.BlockIndex + 1)
 	if err != nil {
 		s.log.Fatal(fmt.Sprintf("failed to get validators: %s", err.Error()))
 	}
-	script, err := smartcontract.CreateDefaultMultiSigRedeemScript(validators)
+	script, err := keys.PublicKeys(validators).CreateDefaultMultiSigRedeemScript()
 	if err != nil {
 		s.log.Fatal(fmt.Sprintf("failed to create multisignature script: %s", err.Error()))
 	}
-	block.Block.NextConsensus = crypto.Hash160(script)
-	block.Block.PrevHash = ctx.PrevHash
-	block.Block.Version = ctx.Version
+	block.Block.NextConsensus = hash.Hash160(script)
 
 	primaryIndex := byte(ctx.PrimaryIndex)
 	block.Block.PrimaryIndex = primaryIndex
 
 	// it's OK to have ctx.TransactionsHashes == nil here
-	hashes := make([]util.Uint256, len(ctx.TransactionHashes))
+	hashes := make([]common.Hash, len(ctx.TransactionHashes))
 	copy(hashes, ctx.TransactionHashes)
 	block.Block.MerkleRoot = hash.CalcMerkleRoot(hashes)
 

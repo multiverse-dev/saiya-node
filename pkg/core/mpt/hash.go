@@ -3,11 +3,11 @@ package mpt
 import (
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
-// HashNode represents an MPT's hash node.
+// HashNode represents MPT's hash node.
 type HashNode struct {
 	BaseNode
 	Collapsed bool
@@ -15,8 +15,8 @@ type HashNode struct {
 
 var _ Node = (*HashNode)(nil)
 
-// NewHashNode returns a hash node with the specified hash.
-func NewHashNode(h util.Uint256) *HashNode {
+// NewHashNode returns hash node with the specified hash.
+func NewHashNode(h common.Hash) *HashNode {
 	return &HashNode{
 		BaseNode: BaseNode{
 			hash:      h,
@@ -30,11 +30,11 @@ func (h *HashNode) Type() NodeType { return HashT }
 
 // Size implements Node interface.
 func (h *HashNode) Size() int {
-	return util.Uint256Size
+	return common.HashLength
 }
 
 // Hash implements Node interface.
-func (h *HashNode) Hash() util.Uint256 {
+func (h *HashNode) Hash() common.Hash {
 	if !h.hashValid {
 		panic("can't get hash of an empty HashNode")
 	}
@@ -49,7 +49,7 @@ func (h *HashNode) Bytes() []byte {
 // DecodeBinary implements io.Serializable.
 func (h *HashNode) DecodeBinary(r *io.BinReader) {
 	if h.hashValid {
-		h.hash.DecodeBinary(r)
+		r.ReadBytes(h.hash[:])
 	}
 }
 
@@ -61,12 +61,12 @@ func (h HashNode) EncodeBinary(w *io.BinWriter) {
 	w.WriteBytes(h.hash[:])
 }
 
-// MarshalJSON implements the json.Marshaler.
+// MarshalJSON implements json.Marshaler.
 func (h *HashNode) MarshalJSON() ([]byte, error) {
-	return []byte(`{"hash":"` + h.hash.StringLE() + `"}`), nil
+	return []byte(`{"hash":"` + h.hash.String() + `"}`), nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (h *HashNode) UnmarshalJSON(data []byte) error {
 	var obj NodeObject
 	if err := obj.UnmarshalJSON(data); err != nil {

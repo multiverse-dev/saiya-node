@@ -8,24 +8,22 @@ import (
 	"reflect"
 )
 
-// MaxArraySize is the maximum size of an array which can be decoded.
-// It is taken from https://github.com/neo-project/neo/blob/master/neo/IO/Helper.cs#L130
 const MaxArraySize = 0x1000000
 
-// BinReader is a convenient wrapper around an io.Reader and err object.
+// BinReader is a convenient wrapper around a io.Reader and err object.
 // Used to simplify error handling when reading into a struct with many fields.
 type BinReader struct {
-	r   io.Reader
+	io.Reader
 	uv  [8]byte
 	Err error
 }
 
 // NewBinReaderFromIO makes a BinReader from io.Reader.
 func NewBinReaderFromIO(ior io.Reader) *BinReader {
-	return &BinReader{r: ior}
+	return &BinReader{Reader: ior}
 }
 
-// NewBinReaderFromBuf makes a BinReader from a byte buffer.
+// NewBinReaderFromBuf makes a BinReader from byte buffer.
 func NewBinReaderFromBuf(b []byte) *BinReader {
 	r := bytes.NewReader(b)
 	return NewBinReaderFromIO(r)
@@ -35,7 +33,7 @@ func NewBinReaderFromBuf(b []byte) *BinReader {
 // reading from bytes.Reader or -1 otherwise.
 func (r *BinReader) Len() int {
 	var res = -1
-	byteReader, ok := r.r.(*bytes.Reader)
+	byteReader, ok := r.Reader.(*bytes.Reader)
 	if ok {
 		res = byteReader.Len()
 	}
@@ -98,7 +96,7 @@ func (r *BinReader) ReadBool() bool {
 	return r.ReadB() != 0
 }
 
-// ReadArray reads an array into a value which must be
+// ReadArray reads array into value which must be
 // a pointer to a slice.
 func (r *BinReader) ReadArray(t interface{}, maxSize ...int) {
 	value := reflect.ValueOf(t)
@@ -187,13 +185,13 @@ func (r *BinReader) ReadVarBytes(maxSize ...int) []byte {
 	return b
 }
 
-// ReadBytes copies a fixed-size buffer from the reader to the provided slice.
+// ReadBytes copies fixed-size buffer from the reader to provided slice.
 func (r *BinReader) ReadBytes(buf []byte) {
 	if r.Err != nil {
 		return
 	}
 
-	_, r.Err = io.ReadFull(r.r, buf)
+	_, r.Err = io.ReadFull(r.Reader, buf)
 }
 
 // ReadString calls ReadVarBytes and casts the results as a string.

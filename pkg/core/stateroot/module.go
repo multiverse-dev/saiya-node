@@ -1,22 +1,20 @@
 package stateroot
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/core/mpt"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/mpt"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -24,12 +22,11 @@ import (
 type (
 	// VerifierFunc is a function that allows to check witness of account
 	// for Hashable item with GAS limit.
-	VerifierFunc func(util.Uint160, hash.Hashable, *transaction.Witness, int64) (int64, error)
+	VerifierFunc func(common.Address, hash.Hashable, *transaction.Witness) error
 	// Module represents module for local processing of state roots.
 	Module struct {
 		Store    *storage.MemCachedStore
-		network  netmode.Magic
-		srInHead bool
+		chainId  uint64
 		mode     mpt.TrieMode
 		mpt      *mpt.Trie
 		verifier VerifierFunc
@@ -48,7 +45,7 @@ type (
 	keyCache struct {
 		height           uint32
 		validatorsKeys   keys.PublicKeys
-		validatorsHash   util.Uint160
+		validatorsHash   common.Address
 		validatorsScript []byte
 	}
 )
@@ -63,8 +60,7 @@ func NewModule(cfg config.ProtocolConfiguration, verif VerifierFunc, log *zap.Lo
 		mode |= mpt.ModeGC
 	}
 	return &Module{
-		network:  cfg.Magic,
-		srInHead: cfg.StateRootInHeader,
+		chainId:  cfg.ChainID,
 		mode:     mode,
 		verifier: verif,
 		log:      log,
@@ -73,7 +69,7 @@ func NewModule(cfg config.ProtocolConfiguration, verif VerifierFunc, log *zap.Lo
 }
 
 // GetState returns value at the specified key fom the MPT with the specified root.
-func (s *Module) GetState(root util.Uint256, key []byte) ([]byte, error) {
+func (s *Module) GetState(root common.Hash, key []byte) ([]byte, error) {
 	// Allow accessing old values, it's RO thing.
 	tr := mpt.NewTrie(mpt.NewHashNode(root), s.mode&^mpt.ModeGCFlag, storage.NewMemCachedStore(s.Store))
 	return tr.Get(key)
@@ -84,14 +80,14 @@ func (s *Module) GetState(root util.Uint256, key []byte) ([]byte, error) {
 // the maximum number of elements to be returned. If nil `start` specified, then
 // item with key equals to prefix is included into result; if empty `start` specified,
 // then item with key equals to prefix is not included into result.
-func (s *Module) FindStates(root util.Uint256, prefix, start []byte, max int) ([]storage.KeyValue, error) {
+func (s *Module) FindStates(root common.Hash, prefix, start []byte, max int) ([]storage.KeyValue, error) {
 	// Allow accessing old values, it's RO thing.
 	tr := mpt.NewTrie(mpt.NewHashNode(root), s.mode&^mpt.ModeGCFlag, storage.NewMemCachedStore(s.Store))
 	return tr.Find(prefix, start, max)
 }
 
 // GetStateProof returns proof of having key in the MPT with the specified root.
-func (s *Module) GetStateProof(root util.Uint256, key []byte) ([][]byte, error) {
+func (s *Module) GetStateProof(root common.Hash, key []byte) ([][]byte, error) {
 	// Allow accessing old values, it's RO thing.
 	tr := mpt.NewTrie(mpt.NewHashNode(root), s.mode&^mpt.ModeGCFlag, storage.NewMemCachedStore(s.Store))
 	return tr.GetProof(key)
@@ -102,37 +98,9 @@ func (s *Module) GetStateRoot(height uint32) (*state.MPTRoot, error) {
 	return s.getStateRoot(makeStateRootKey(height))
 }
 
-// GetLatestStateHeight returns the latest blockchain height by the given stateroot.
-func (s *Module) GetLatestStateHeight(root util.Uint256) (uint32, error) {
-	rootBytes := root.BytesBE()
-	rootStartOffset := 1 + 4 // stateroot version (1 byte) + stateroot index (4 bytes)
-	rootEndOffset := rootStartOffset + util.Uint256Size
-	var (
-		h       uint32
-		found   bool
-		rootKey = makeStateRootKey(s.localHeight.Load())
-	)
-	s.Store.Seek(storage.SeekRange{
-		Prefix:    []byte{rootKey[0]}, // DataMPTAux
-		Start:     rootKey[1:],        // Start is a value that should be appended to the Prefix
-		Backwards: true,
-	}, func(k, v []byte) bool {
-		if len(k) == 5 && bytes.Equal(v[rootStartOffset:rootEndOffset], rootBytes) {
-			h = binary.BigEndian.Uint32(k[1:]) // cut prefix DataMPTAux
-			found = true
-			return false
-		}
-		return true
-	})
-	if found {
-		return h, nil
-	}
-	return h, storage.ErrKeyNotFound
-}
-
 // CurrentLocalStateRoot returns hash of the local state root.
-func (s *Module) CurrentLocalStateRoot() util.Uint256 {
-	return s.currentLocal.Load().(util.Uint256)
+func (s *Module) CurrentLocalStateRoot() common.Hash {
+	return s.currentLocal.Load().(common.Hash)
 }
 
 // CurrentLocalHeight returns height of the local state root.
@@ -154,7 +122,7 @@ func (s *Module) Init(height uint32) error {
 
 	if height == 0 {
 		s.mpt = mpt.NewTrie(nil, s.mode, s.Store)
-		s.currentLocal.Store(util.Uint256{})
+		s.currentLocal.Store(common.Hash{})
 		return nil
 	}
 	r, err := s.getStateRoot(makeStateRootKey(height))
@@ -258,10 +226,6 @@ func (s *Module) UpdateCurrentLocal(mpt *mpt.Trie, sr *state.MPTRoot) {
 	s.mpt = mpt
 	s.currentLocal.Store(sr.Root)
 	s.localHeight.Store(sr.Index)
-	if s.srInHead {
-		s.validatedHeight.Store(sr.Index)
-		updateStateHeightMetric(sr.Index)
-	}
 }
 
 // VerifyStateRoot checks if state root is valid.
@@ -270,7 +234,7 @@ func (s *Module) VerifyStateRoot(r *state.MPTRoot) error {
 	if err != nil {
 		return errors.New("can't get previous state root")
 	}
-	if len(r.Witness) != 1 {
+	if len(r.Witness.VerificationScript) == 0 {
 		return errors.New("no witness")
 	}
 	return s.verifyWitness(r)
@@ -283,6 +247,5 @@ func (s *Module) verifyWitness(r *state.MPTRoot) error {
 	s.mtx.Lock()
 	h := s.getKeyCacheForHeight(r.Index).validatorsHash
 	s.mtx.Unlock()
-	_, err := s.verifier(h, r, &r.Witness[0], maxVerificationGAS)
-	return err
+	return s.verifier(h, r, &r.Witness)
 }

@@ -3,143 +3,53 @@ package wallet
 import (
 	"encoding/hex"
 	"encoding/json"
+	"math/big"
 	"testing"
 
-	"github.com/nspcc-dev/neo-go/internal/keytestcases"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestNewAccount(t *testing.T) {
-	acc, err := NewAccount()
-	require.NoError(t, err)
-	require.NotNil(t, acc)
+func TestAddressJSON(t *testing.T) {
+	addr := common.HexToAddress("0xb2f58f5d4b6756e8c98d31966619ab084a579a89")
+	t.Log(addr)
+	d, err := json.Marshal(addr)
+	assert.NoError(t, err)
+	t.Log(string(d))
 }
 
-func TestDecryptAccount(t *testing.T) {
-	for _, testCase := range keytestcases.Arr {
-		acc := &Account{EncryptedWIF: testCase.EncryptedWif}
-		assert.Nil(t, acc.PrivateKey())
-		err := acc.Decrypt(testCase.Passphrase, keys.NEP2ScryptParams())
-		if testCase.Invalid {
-			assert.Error(t, err)
-			continue
-		}
-
-		assert.NoError(t, err)
-		assert.NotNil(t, acc.PrivateKey())
-		assert.Equal(t, testCase.PrivateKey, acc.privateKey.String())
-	}
-	// No encrypted key.
-	acc := &Account{}
-	require.Error(t, acc.Decrypt("qwerty", keys.NEP2ScryptParams()))
+func TestPrivateKeyToAddress(t *testing.T) {
+	hexPrivateKey := "655119e8830ed7816c91a6ce8138560854687e2c78074d065becc66fe5a65f6b"
+	pk, err := crypto.HexToECDSA(hexPrivateKey)
+	assert.NoError(t, err)
+	t.Log(crypto.PubkeyToAddress(pk.PublicKey))
+	ppk, err := keys.NewPrivateKeyFromHex(hexPrivateKey)
+	assert.NoError(t, err)
+	t.Log(ppk.Address())
 }
 
-func TestNewFromWif(t *testing.T) {
-	for _, testCase := range keytestcases.Arr {
-		acc, err := NewAccountFromWIF(testCase.Wif)
-		if testCase.Invalid {
-			assert.Error(t, err)
-			continue
-		}
-
-		assert.NoError(t, err)
-		compareFields(t, testCase, acc)
-	}
+func TestBigInt(t *testing.T) {
+	floor := 52000000
+	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(18), nil)
+	initial := big.NewInt(1).Mul(big.NewInt(int64(floor)), wei)
+	t.Log(hex.EncodeToString(initial.Bytes()))
 }
 
-func TestNewAccountFromEncryptedWIF(t *testing.T) {
-	for _, tc := range keytestcases.Arr {
-		acc, err := NewAccountFromEncryptedWIF(tc.EncryptedWif, tc.Passphrase, keys.NEP2ScryptParams())
-		if tc.Invalid {
-			assert.Error(t, err)
-			continue
-		}
-
-		assert.NoError(t, err)
-		compareFields(t, tc, acc)
-	}
-}
-
-func TestContract_MarshalJSON(t *testing.T) {
-	var c Contract
-
-	data := []byte(`{"script":"AQI=","parameters":[{"name":"name0", "type":"Signature"}],"deployed":false}`)
-	require.NoError(t, json.Unmarshal(data, &c))
-	require.Equal(t, []byte{1, 2}, c.Script)
-
-	result, err := json.Marshal(c)
-	require.NoError(t, err)
-	require.JSONEq(t, string(data), string(result))
-
-	data = []byte(`1`)
-	require.Error(t, json.Unmarshal(data, &c))
-
-	data = []byte(`{"script":"ERROR","parameters":[1],"deployed":false}`)
-	require.Error(t, json.Unmarshal(data, &c))
-}
-
-func TestContract_ScriptHash(t *testing.T) {
-	script := []byte{0, 1, 2, 3}
-	c := &Contract{Script: script}
-
-	require.Equal(t, hash.Hash160(script), c.ScriptHash())
-}
-
-func TestAccount_ConvertMultisig(t *testing.T) {
-	// test is based on a wallet1_solo.json accounts from neo-local
-	a, err := NewAccountFromWIF("KxyjQ8eUa4FHt3Gvioyt1Wz29cTUrE4eTqX3yFSk1YFCsPL8uNsY")
-	require.NoError(t, err)
-
-	hexs := []string{
-		"02b3622bf4017bdfe317c58aed5f4c753f206b7db896046fa7d774bbc4bf7f8dc2", // <- this is our key
-		"02103a7f7dd016558597f7960d27c516a4394fd968b9e65155eb4b013e4040406e",
-		"02a7bc55fe8684e0119768d104ba30795bdcc86619e864add26156723ed185cd62",
-		"03d90c07df63e690ce77912e10ab51acc944b66860237b608c4f8f8309e71ee699",
-	}
-
-	t.Run("invalid number of signatures", func(t *testing.T) {
-		pubs := convertPubs(t, hexs)
-		require.Error(t, a.ConvertMultisig(0, pubs))
-	})
-
-	t.Run("account key is missing from multisig", func(t *testing.T) {
-		pubs := convertPubs(t, hexs[1:])
-		require.Error(t, a.ConvertMultisig(1, pubs))
-	})
-
-	t.Run("1/1 multisig", func(t *testing.T) {
-		pubs := convertPubs(t, hexs[:1])
-		require.NoError(t, a.ConvertMultisig(1, pubs))
-		require.Equal(t, "NfgHwwTi3wHAS8aFAN243C5vGbkYDpqLHP", a.Address)
-	})
-
-	t.Run("3/4 multisig", func(t *testing.T) {
-		pubs := convertPubs(t, hexs)
-		require.NoError(t, a.ConvertMultisig(3, pubs))
-		require.Equal(t, "NVTiAjNgagDkTr5HTzDmQP9kPwPHN5BgVq", a.Address)
-	})
-}
-
-func convertPubs(t *testing.T, hexKeys []string) []*keys.PublicKey {
-	pubs := make([]*keys.PublicKey, len(hexKeys))
-	for i := range pubs {
-		var err error
-		pubs[i], err = keys.NewPublicKeyFromString(hexKeys[i])
-		require.NoError(t, err)
-	}
-	return pubs
-}
-
-func compareFields(t *testing.T, tk keytestcases.Ktype, acc *Account) {
-	want, have := tk.Address, acc.Address
-	require.Equalf(t, want, have, "expected address %s got %s", want, have)
-	want, have = tk.Wif, acc.wif
-	require.Equalf(t, want, have, "expected wif %s got %s", want, have)
-	want, have = tk.PublicKey, hex.EncodeToString(acc.publicKey)
-	require.Equalf(t, want, have, "expected pub key %s got %s", want, have)
-	want, have = tk.PrivateKey, acc.privateKey.String()
-	require.Equalf(t, want, have, "expected priv key %s got %s", want, have)
+func TestOneMultiAddress(t *testing.T) {
+	k, err := keys.NewPublicKeyFromString("028c43c918440067b4b71b601871752a0b549092ff9aa9a7bc46f5244684f30ea5")
+	assert.NoError(t, err)
+	ks := keys.PublicKeys{k}
+	script, err := ks.CreateDefaultMultiSigRedeemScript()
+	assert.NoError(t, err)
+	t.Log(hash.Hash160(script))
+	
+	k, err = keys.NewPublicKeyFromString("03092c7fc564d67a2c589a4229c54f19358629529bc191daf1642d0a95989e3a83")
+	assert.NoError(t, err)
+	ks = keys.PublicKeys{k}
+	script, err = ks.CreateDefaultMultiSigRedeemScript()
+	assert.NoError(t, err)
+	t.Log(hash.Hash160(script))
 }

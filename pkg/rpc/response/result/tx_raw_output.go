@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 )
 
 // TransactionOutputRaw is used as a wrapper to represents
@@ -19,32 +19,28 @@ type TransactionOutputRaw struct {
 
 // TransactionMetadata is an auxiliary struct for proper TransactionOutputRaw marshaling.
 type TransactionMetadata struct {
-	Blockhash     util.Uint256 `json:"blockhash,omitempty"`
-	Confirmations int          `json:"confirmations,omitempty"`
-	Timestamp     uint64       `json:"blocktime,omitempty"`
-	VMState       string       `json:"vmstate,omitempty"`
+	Blockhash        interface{} `json:"blockhash"`
+	BlockNumber      interface{} `json:"confirmations"`
+	TransactionIndex interface{} `json:"blocktime"`
 }
 
 // NewTransactionOutputRaw returns a new ransactionOutputRaw object.
-func NewTransactionOutputRaw(tx *transaction.Transaction, header *block.Header, appExecResult *state.AppExecResult, chain LedgerAux) TransactionOutputRaw {
+func NewTransactionOutputRaw(tx *transaction.Transaction, header *block.Header, receipt *types.Receipt) TransactionOutputRaw {
 	result := TransactionOutputRaw{
 		Transaction: *tx,
 	}
 	if header == nil {
 		return result
 	}
-	// confirmations formula
-	confirmations := int(chain.BlockHeight() - header.Index + 1)
 	result.TransactionMetadata = TransactionMetadata{
-		Blockhash:     header.Hash(),
-		Confirmations: confirmations,
-		Timestamp:     header.Timestamp,
-		VMState:       appExecResult.VMState.String(),
+		Blockhash:        header.Hash(),
+		BlockNumber:      hexutil.EncodeUint64(uint64(header.Index)),
+		TransactionIndex: hexutil.EncodeUint64(uint64(receipt.TransactionIndex)),
 	}
 	return result
 }
 
-// MarshalJSON implements the json.Marshaler interface.
+// MarshalJSON implements json.Marshaler interface.
 func (t TransactionOutputRaw) MarshalJSON() ([]byte, error) {
 	output, err := json.Marshal(t.TransactionMetadata)
 	if err != nil {
@@ -65,7 +61,7 @@ func (t TransactionOutputRaw) MarshalJSON() ([]byte, error) {
 	return output, nil
 }
 
-// UnmarshalJSON implements the json.Marshaler interface.
+// UnmarshalJSON implements json.Marshaler interface.
 func (t *TransactionOutputRaw) UnmarshalJSON(data []byte) error {
 	// As transaction.Transaction and tranactionOutputRaw are at the same level in json,
 	// do unmarshalling separately for both structs.

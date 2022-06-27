@@ -1,30 +1,30 @@
 package consensus
 
 import (
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/dbft/payload"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // prepareResponse represents dBFT PrepareResponse message.
 type prepareResponse struct {
-	preparationHash util.Uint256
+	preparationHash common.Hash
 }
 
 var _ payload.PrepareResponse = (*prepareResponse)(nil)
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (p *prepareResponse) EncodeBinary(w *io.BinWriter) {
 	w.WriteBytes(p.preparationHash[:])
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (p *prepareResponse) DecodeBinary(r *io.BinReader) {
 	r.ReadBytes(p.preparationHash[:])
 }
 
-// PreparationHash implements the payload.PrepareResponse interface.
-func (p *prepareResponse) PreparationHash() util.Uint256 { return p.preparationHash }
+// PreparationHash implements payload.PrepareResponse interface.
+func (p *prepareResponse) PreparationHash() common.Hash { return p.preparationHash }
 
-// SetPreparationHash implements the payload.PrepareResponse interface.
-func (p *prepareResponse) SetPreparationHash(h util.Uint256) { p.preparationHash = h }
+// SetPreparationHash implements payload.PrepareResponse interface.
+func (p *prepareResponse) SetPreparationHash(h common.Hash) { p.preparationHash = h }

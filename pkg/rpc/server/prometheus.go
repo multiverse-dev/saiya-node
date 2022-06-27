@@ -16,23 +16,16 @@ func incCounter(name string) {
 	}
 }
 
-func regCounter(call string) {
-	ctr := prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Help:      fmt.Sprintf("Number of calls to %s rpc endpoint", call),
-			Name:      fmt.Sprintf("%s_called", call),
-			Namespace: "neogo",
-		},
-	)
-	prometheus.MustRegister(ctr)
-	rpcCounter[call] = ctr
-}
-
 func init() {
 	for call := range rpcHandlers {
-		regCounter(call)
-	}
-	for call := range rpcWsHandlers {
-		regCounter(call)
+		ctr := prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Help:      fmt.Sprintf("Number of calls to %s rpc endpoint", call),
+				Name:      fmt.Sprintf("%s_called", call),
+				Namespace: "saiya",
+			},
+		)
+		prometheus.MustRegister(ctr)
+		rpcCounter[call] = ctr
 	}
 }

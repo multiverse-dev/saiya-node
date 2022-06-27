@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/nspcc-dev/neo-go/pkg/util/slice"
+	"github.com/multiverse-dev/saiya/pkg/util/slice"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,8 +51,6 @@ var testCases = []struct {
 	{9187201950435737471, []byte{127, 127, 127, 127, 127, 127, 127, 127}},
 	{-9187484529235886209, []byte{127, 127, 127, 127, 127, 127, 127, 128}},
 
-	// https://github.com/dotnet/runtime/blob/master/src/libraries/System.Runtime.Numerics/tests/BigInteger/ToByteArray.cs#L14
-	// {0, []byte{0x00}}, commented because this test check default `BigInteger` serialization, not NEO3 serialization.
 	{3, []byte{0x03}},
 	{128, []byte{0x80, 0x00}},
 	{200, []byte{0xc8, 0x00}},

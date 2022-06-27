@@ -1,4 +1,4 @@
 /*
-Package base58 wraps generic base58 encoder with NEO-specific checksumming.
+Package base58 wraps generic base58 encoder with checksumming.
 */
 package base58

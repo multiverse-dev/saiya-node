@@ -5,10 +5,10 @@ import (
 	"errors"
 
 	"github.com/mr-tron/base58"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
 )
 
-// CheckDecode implements base58-encoded string decoding with a hash-based
+// CheckDecode implements a base58-encoded string decoding with hash-based
 // checksum check.
 func CheckDecode(s string) (b []byte, err error) {
 	b, err = base58.Decode(s)
@@ -30,7 +30,7 @@ func CheckDecode(s string) (b []byte, err error) {
 	return b, nil
 }
 
-// CheckEncode encodes the given byte slice into a base58 string with a hash-based
+// CheckEncode encodes given byte slice into a base58 string with hash-based
 // checksum appended to it.
 func CheckEncode(b []byte) string {
 	b = append(b, hash.Checksum(b)...)

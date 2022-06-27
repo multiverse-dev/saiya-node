@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/rpc/client"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/request"
+	"github.com/multiverse-dev/saiya/pkg/rpc/client"
+	"github.com/multiverse-dev/saiya/pkg/rpc/request"
 	"go.uber.org/zap"
 )
 
-// RPCClient represent an rpc client for a single node.
+// RPCClient represent rpc client for a single node.
 type RPCClient struct {
 	client      *client.Client
 	addr        string
@@ -20,10 +20,10 @@ type RPCClient struct {
 	method      SendMethod
 }
 
-// SendMethod represents an rpc method for sending data to other nodes.
+// SendMethod represents rpc method for sending data to other nodes.
 type SendMethod func(*client.Client, request.RawParams) error
 
-// NewRPCClient returns a new rpc client for the provided address and method.
+// NewRPCClient returns new rpc client for provided address and method.
 func (r *RPCBroadcaster) NewRPCClient(addr string, method SendMethod, timeout time.Duration, ch chan request.RawParams) *RPCClient {
 	return &RPCClient{
 		addr:        addr,

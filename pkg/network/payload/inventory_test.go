@@ -1,52 +1,24 @@
 package payload
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/nspcc-dev/neo-go/internal/testserdes"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	. "github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestInventoryEncodeDecode(t *testing.T) {
-	hashes := []Uint256{
-		hash.Sha256([]byte("a")),
-		hash.Sha256([]byte("b")),
+func TestInventoryEncode(t *testing.T) {
+	hashes := []common.Hash{
+		common.HexToHash("0x8228840c950c5c7402828d2f073d5973ded9f6147ae6a57767d68229531a2082"),
+		common.HexToHash("0x0f795334484b66b296f6ded28162a7467fd445eb387469119c4be2247e174976"),
 	}
-	inv := NewInventory(BlockType, hashes)
-
-	testserdes.EncodeDecodeBinary(t, inv, new(Inventory))
-}
-
-func TestEmptyInv(t *testing.T) {
-	msgInv := NewInventory(TXType, []Uint256{})
-
-	data, err := testserdes.EncodeBinary(msgInv)
-	assert.Nil(t, err)
-	assert.Equal(t, []byte{byte(TXType), 0}, data)
-	assert.Equal(t, 0, len(msgInv.Hashes))
-}
-
-func TestValid(t *testing.T) {
-	require.True(t, TXType.Valid(false))
-	require.True(t, TXType.Valid(true))
-	require.True(t, BlockType.Valid(false))
-	require.True(t, BlockType.Valid(true))
-	require.True(t, ExtensibleType.Valid(false))
-	require.True(t, ExtensibleType.Valid(true))
-	require.False(t, P2PNotaryRequestType.Valid(false))
-	require.True(t, P2PNotaryRequestType.Valid(true))
-	require.False(t, InventoryType(0xFF).Valid(false))
-	require.False(t, InventoryType(0xFF).Valid(true))
-}
-
-func TestString(t *testing.T) {
-	require.Equal(t, "TX", TXType.String())
-	require.Equal(t, "block", BlockType.String())
-	require.Equal(t, "extensible", ExtensibleType.String())
-	require.Equal(t, "p2pNotaryRequest", P2PNotaryRequestType.String())
-	require.True(t, strings.Contains(InventoryType(0xFF).String(), "unknown"))
+	inv := NewInventory(ExtensibleType, hashes)
+	b, err := io.ToByteArray(inv)
+	assert.NoError(t, err)
+	i := &Inventory{}
+	err = io.FromByteArray(i, b)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(i.Hashes))
+	assert.Equal(t, common.HexToHash("0x8228840c950c5c7402828d2f073d5973ded9f6147ae6a57767d68229531a2082"), i.Hashes[0])
 }

@@ -1,14 +1,13 @@
 package stateroot
 
 import (
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
 )
 
 // UpdateStateValidators updates list of state validator keys.
 func (s *Module) UpdateStateValidators(height uint32, pubs keys.PublicKeys) {
-	script, _ := smartcontract.CreateDefaultMultiSigRedeemScript(pubs)
+	script, _ := pubs.CreateDefaultMultiSigRedeemScript()
 	h := hash.Hash160(script)
 
 	s.mtx.Lock()

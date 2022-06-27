@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/util/slice"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/util/slice"
 )
 
 var (
@@ -19,13 +19,13 @@ var (
 	errStop          = errors.New("stop condition is met")
 )
 
-// Billet is a part of an MPT trie with missing hash nodes that need to be restored.
+// Billet is a part of MPT trie with missing hash nodes that need to be restored.
 // Billet is based on the following assumptions:
-// 1. Refcount can only be incremented (we don't change the MPT structure during restore,
+// 1. Refcount can only be incremented (we don't change MPT structure during restore,
 //    thus don't need to decrease refcount).
-// 2. Each time a part of a Billet is completely restored, it is collapsed into
+// 2. Each time the part of Billet is completely restored, it is collapsed into
 //    HashNode.
-// 3. Any pair (node, path) must be restored only once. It's a duty of an MPT pool to manage
+// 3. Pair (node, path) must be restored only once. It's a duty of MPT pool to manage
 //    MPT paths in order to provide this assumption.
 type Billet struct {
 	TempStoragePrefix storage.KeyPrefix
@@ -35,11 +35,11 @@ type Billet struct {
 	mode TrieMode
 }
 
-// NewBillet returns a new billet for MPT trie restoring. It accepts a MemCachedStore
+// NewBillet returns new billet for MPT trie restoring. It accepts a MemCachedStore
 // to decouple storage errors from logic errors so that all storage errors are
-// processed during `store.Persist()` at the caller. Another benifit is
+// processed during `store.Persist()` at the caller. This also has the benefit,
 // that every `Put` can be considered an atomic operation.
-func NewBillet(rootHash util.Uint256, mode TrieMode, prefix storage.KeyPrefix, store *storage.MemCachedStore) *Billet {
+func NewBillet(rootHash common.Hash, mode TrieMode, prefix storage.KeyPrefix, store *storage.MemCachedStore) *Billet {
 	return &Billet{
 		TempStoragePrefix: prefix,
 		Store:             store,
@@ -49,8 +49,8 @@ func NewBillet(rootHash util.Uint256, mode TrieMode, prefix storage.KeyPrefix, s
 }
 
 // RestoreHashNode replaces HashNode located at the provided path by the specified Node
-// and stores it. It also maintains the MPT as small as possible by collapsing those parts
-// of the MPT that have been completely restored.
+// and stores it. It also maintains MPT as small as possible by collapsing those parts
+// of MPT that have been completely restored.
 func (b *Billet) RestoreHashNode(path []byte, node Node) error {
 	if _, ok := node.(*HashNode); ok {
 		return fmt.Errorf("%w: unable to restore node into HashNode", ErrRestoreFailed)
@@ -75,7 +75,7 @@ func (b *Billet) RestoreHashNode(path []byte, node Node) error {
 	return nil
 }
 
-// putIntoNode puts val with the provided path inside curr and returns an updated node.
+// putIntoNode puts val with provided path inside curr and returns updated node.
 // Reference counters are updated for both curr and returned value.
 func (b *Billet) putIntoNode(curr Node, path []byte, val Node) (Node, error) {
 	switch n := curr.(type) {
@@ -99,15 +99,15 @@ func (b *Billet) putIntoLeaf(curr *LeafNode, path []byte, val Node) (Node, error
 		return nil, fmt.Errorf("%w: can't modify LeafNode during restore", ErrRestoreFailed)
 	}
 	if curr.Hash() != val.Hash() {
-		return nil, fmt.Errorf("%w: bad Leaf node hash: expected %s, got %s", ErrRestoreFailed, curr.Hash().StringBE(), val.Hash().StringBE())
+		return nil, fmt.Errorf("%w: bad Leaf node hash: expected %s, got %s", ErrRestoreFailed, curr.Hash().String(), val.Hash().String())
 	}
 	// Once Leaf node is restored, it will be collapsed into HashNode forever, so
-	// there shouldn't be such situation when we try to restore a Leaf node.
+	// there shouldn't be such situation when we try to restore Leaf node.
 	panic("bug: can't restore LeafNode")
 }
 
 func (b *Billet) putIntoBranch(curr *BranchNode, path []byte, val Node) (Node, error) {
-	if len(path) == 0 && curr.Hash().Equals(val.Hash()) {
+	if len(path) == 0 && curr.Hash() == (val.Hash()) {
 		// This node has already been restored, so it's an MPT pool duty to avoid
 		// duplicating restore requests.
 		panic("bug: can't perform restoring of BranchNode twice")
@@ -124,7 +124,7 @@ func (b *Billet) putIntoBranch(curr *BranchNode, path []byte, val Node) (Node, e
 func (b *Billet) putIntoExtension(curr *ExtensionNode, path []byte, val Node) (Node, error) {
 	if len(path) == 0 {
 		if curr.Hash() != val.Hash() {
-			return nil, fmt.Errorf("%w: bad Extension node hash: expected %s, got %s", ErrRestoreFailed, curr.Hash().StringBE(), val.Hash().StringBE())
+			return nil, fmt.Errorf("%w: bad Extension node hash: expected %s, got %s", ErrRestoreFailed, curr.Hash().String(), val.Hash().String())
 		}
 		// This node has already been restored, so it's an MPT pool duty to avoid
 		// duplicating restore requests.
@@ -143,20 +143,20 @@ func (b *Billet) putIntoExtension(curr *ExtensionNode, path []byte, val Node) (N
 }
 
 func (b *Billet) putIntoHash(curr *HashNode, path []byte, val Node) (Node, error) {
-	// Once a part of the MPT Billet is completely restored, it will be collapsed forever, so
+	// Once a part of MPT Billet is completely restored, it will be collapsed forever, so
 	// it's an MPT pool duty to avoid duplicating restore requests.
 	if len(path) != 0 {
 		return nil, fmt.Errorf("%w: node has already been collapsed", ErrRestoreFailed)
 	}
 
 	// `curr` hash node can be either of
-	// 1) saved in the storage (i.g. if we've already restored a node with the same hash from the
-	//    other part of the MPT), so just add it to the local in-memory MPT.
+	// 1) saved in storage (i.g. if we've already restored node with the same hash from the
+	//    other part of MPT), so just add it to local in-memory MPT.
 	// 2) missing from the storage. It's OK because we're syncing MPT state, and the purpose
 	//    is to store missing hash nodes.
 	// both cases are OK, but we still need to validate `val` against `curr`.
 	if val.Hash() != curr.Hash() {
-		return nil, fmt.Errorf("%w: can't restore HashNode: expected and actual hashes mismatch (%s vs %s)", ErrRestoreFailed, curr.Hash().StringBE(), val.Hash().StringBE())
+		return nil, fmt.Errorf("%w: can't restore HashNode: expected and actual hashes mismatch (%s vs %s)", ErrRestoreFailed, curr.Hash().String(), val.Hash().String())
 	}
 
 	if curr.Collapsed {
@@ -176,7 +176,7 @@ func (b *Billet) putIntoHash(curr *HashNode, path []byte, val Node) (Node, error
 	return val, nil
 }
 
-func (b *Billet) incrementRefAndStore(h util.Uint256, bs []byte) {
+func (b *Billet) incrementRefAndStore(h common.Hash, bs []byte) {
 	key := makeStorageKey(h)
 	if b.mode.RC() {
 		var (
@@ -205,7 +205,7 @@ func (b *Billet) incrementRefAndStore(h util.Uint256, bs []byte) {
 // returned from `process` function. It also replaces all HashNodes to their
 // "unhashed" counterparts until the stop condition is satisfied.
 func (b *Billet) Traverse(process func(pathToNode []byte, node Node, nodeBytes []byte) bool, ignoreStorageErr bool) error {
-	r, err := b.traverse(b.root, []byte{}, []byte{}, process, ignoreStorageErr, false)
+	r, err := b.traverse(b.root, []byte{}, []byte{}, process, ignoreStorageErr)
 	if err != nil && !errors.Is(err, errStop) {
 		return err
 	}
@@ -213,7 +213,7 @@ func (b *Billet) Traverse(process func(pathToNode []byte, node Node, nodeBytes [
 	return nil
 }
 
-func (b *Billet) traverse(curr Node, path, from []byte, process func(pathToNode []byte, node Node, nodeBytes []byte) bool, ignoreStorageErr bool, backwards bool) (Node, error) {
+func (b *Billet) traverse(curr Node, path, from []byte, process func(pathToNode []byte, node Node, nodeBytes []byte) bool, ignoreStorageErr bool) (Node, error) {
 	if _, ok := curr.(EmptyNode); ok {
 		// We're not interested in EmptyNodes, and they do not affect the
 		// traversal process, thus remain them untouched.
@@ -227,7 +227,7 @@ func (b *Billet) traverse(curr Node, path, from []byte, process func(pathToNode 
 			}
 			return nil, err
 		}
-		return b.traverse(r, path, from, process, ignoreStorageErr, backwards)
+		return b.traverse(r, path, from, process, ignoreStorageErr)
 	}
 	if len(from) == 0 {
 		bytes := slice.Copy(curr.Bytes())
@@ -242,36 +242,22 @@ func (b *Billet) traverse(curr Node, path, from []byte, process func(pathToNode 
 		var (
 			startIndex byte
 			endIndex   byte = childrenCount
-			cmp             = func(i int) bool {
-				return i < int(endIndex)
-			}
-			step = 1
 		)
-		if backwards {
-			startIndex, endIndex = lastChild, startIndex
-			cmp = func(i int) bool {
-				return i >= int(endIndex)
-			}
-			step = -1
-		}
 		if len(from) != 0 {
 			endIndex = lastChild
-			if backwards {
-				endIndex = 0
-			}
 			startIndex, from = splitPath(from)
 		}
-		for i := int(startIndex); cmp(i); i += step {
+		for i := startIndex; i < endIndex; i++ {
 			var newPath []byte
 			if i == lastChild {
 				newPath = path
 			} else {
-				newPath = append(path, byte(i))
+				newPath = append(path, i)
 			}
-			if byte(i) != startIndex {
+			if i != startIndex {
 				from = []byte{}
 			}
-			r, err := b.traverse(n.Children[i], newPath, from, process, ignoreStorageErr, backwards)
+			r, err := b.traverse(n.Children[i], newPath, from, process, ignoreStorageErr)
 			if err != nil {
 				if !errors.Is(err, errStop) {
 					return nil, err
@@ -290,7 +276,7 @@ func (b *Billet) traverse(curr Node, path, from []byte, process func(pathToNode 
 		} else {
 			return b.tryCollapseExtension(n), nil
 		}
-		r, err := b.traverse(n.next, append(path, n.key...), from, process, ignoreStorageErr, backwards)
+		r, err := b.traverse(n.next, append(path, n.key...), from, process, ignoreStorageErr)
 		if err != nil && !errors.Is(err, errStop) {
 			return nil, err
 		}
@@ -338,7 +324,7 @@ func (b *Billet) tryCollapseBranch(curr *BranchNode) Node {
 }
 
 // GetFromStore returns MPT node from the storage.
-func (b *Billet) GetFromStore(h util.Uint256) (Node, error) {
+func (b *Billet) GetFromStore(h common.Hash) (Node, error) {
 	data, err := b.Store.Get(makeStorageKey(h))
 	if err != nil {
 		return nil, err

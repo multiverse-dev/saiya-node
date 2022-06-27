@@ -1,6 +1,6 @@
 package mempool
 
-import "github.com/nspcc-dev/neo-go/pkg/core/mempoolevent"
+import "github.com/multiverse-dev/saiya/pkg/core/mempoolevent"
 
 // RunSubscriptions runs subscriptions goroutine if mempool subscriptions are enabled.
 // You should manually free the resources by calling StopSubscriptions on mempool shutdown.
@@ -25,16 +25,16 @@ func (mp *Pool) StopSubscriptions() {
 	}
 }
 
-// SubscribeForTransactions adds the given channel to the new mempool event broadcasting, so when
-// there is a new transactions added to the mempool or an existing transaction removed from
-// the mempool, you'll receive it via this channel.
+// SubscribeForTransactions adds given channel to new mempool event broadcasting, so when
+// there is a new transactions added to mempool or an existing transaction removed from
+// mempool you'll receive it via this channel.
 func (mp *Pool) SubscribeForTransactions(ch chan<- mempoolevent.Event) {
 	if mp.subscriptionsOn.Load() {
 		mp.subCh <- ch
 	}
 }
 
-// UnsubscribeFromTransactions unsubscribes the given channel from new mempool notifications,
+// UnsubscribeFromTransactions unsubscribes given channel from new mempool notifications,
 // you can close it afterwards. Passing non-subscribed channel is a no-op.
 func (mp *Pool) UnsubscribeFromTransactions(ch chan<- mempoolevent.Event) {
 	if mp.subscriptionsOn.Load() {

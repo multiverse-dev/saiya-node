@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
 )
 
 //go:generate stringer -type=CommandType -output=message_string.go
@@ -15,12 +15,12 @@ import (
 // CompressionMinSize is the lower bound to apply compression.
 const CompressionMinSize = 1024
 
-// Message is a complete message sent between nodes.
+// Message is the complete message send between nodes.
 type Message struct {
 	// Flags that represents whether a message is compressed.
 	// 0 for None, 1 for Compressed.
 	Flags MessageFlag
-	// Command is a byte command code.
+	// Command is byte command code.
 	Command CommandType
 
 	// Payload send with the message.
@@ -29,12 +29,12 @@ type Message struct {
 	// Compressed message payload.
 	compressedPayload []byte
 
-	// StateRootInHeader specifies if the state root is included in the block header.
+	// StateRootInHeader specifies if state root is included in block header.
 	// This is needed for correct decoding.
 	StateRootInHeader bool
 }
 
-// MessageFlag represents compression level of a message payload.
+// MessageFlag represents compression level of message payload.
 type MessageFlag byte
 
 // Possible message flags.
@@ -145,11 +145,9 @@ func (m *Message) decodePayload() error {
 	case CMDAddr:
 		p = &payload.AddressList{}
 	case CMDBlock:
-		p = block.New(m.StateRootInHeader)
+		p = block.New()
 	case CMDExtensible:
 		p = payload.NewExtensible()
-	case CMDP2PNotaryRequest:
-		p = &payload.P2PNotaryRequest{}
 	case CMDGetBlocks:
 		p = &payload.GetBlocks{}
 	case CMDGetHeaders:
@@ -157,7 +155,7 @@ func (m *Message) decodePayload() error {
 	case CMDGetBlockByIndex:
 		p = &payload.GetBlockByIndex{}
 	case CMDHeaders:
-		p = &payload.Headers{StateRootInHeader: m.StateRootInHeader}
+		p = &payload.Headers{}
 	case CMDTX:
 		p, err := transaction.NewTransactionFromBytes(buf)
 		if err != nil {
@@ -212,8 +210,8 @@ func (m *Message) Bytes() ([]byte, error) {
 	return w.Bytes(), nil
 }
 
-// tryCompressPayload sets the message's compressed payload to a serialized
-// payload and compresses it in case its size exceeds CompressionMinSize.
+// tryCompressPayload sets message's compressed payload to serialized
+// payload and compresses it in case if its size exceeds CompressionMinSize.
 func (m *Message) tryCompressPayload() error {
 	if m.Payload == nil {
 		return nil

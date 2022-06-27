@@ -3,16 +3,16 @@ package mpt
 import (
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // BaseNode implements basic things every node needs like caching hash and
 // serialized representation. It's a basic node building block intended to be
 // included into all node types.
 type BaseNode struct {
-	hash       util.Uint256
+	hash       common.Hash
 	bytes      []byte
 	hashValid  bool
 	bytesValid bool
@@ -20,24 +20,24 @@ type BaseNode struct {
 
 // BaseNodeIface abstracts away basic Node functions.
 type BaseNodeIface interface {
-	Hash() util.Uint256
+	Hash() common.Hash
 	Type() NodeType
 	Bytes() []byte
 }
 
 type flushedNode interface {
-	setCache([]byte, util.Uint256)
+	setCache([]byte, common.Hash)
 }
 
-func (b *BaseNode) setCache(bs []byte, h util.Uint256) {
+func (b *BaseNode) setCache(bs []byte, h common.Hash) {
 	b.bytes = bs
 	b.hash = h
 	b.bytesValid = true
 	b.hashValid = true
 }
 
-// getHash returns the hash of this BaseNode.
-func (b *BaseNode) getHash(n Node) util.Uint256 {
+// getHash returns a hash of this BaseNode.
+func (b *BaseNode) getHash(n Node) common.Hash {
 	if !b.hashValid {
 		b.updateHash(n)
 	}
@@ -52,16 +52,16 @@ func (b *BaseNode) getBytes(n Node) []byte {
 	return b.bytes
 }
 
-// updateHash updates the hash field for this BaseNode.
+// updateHash updates hash field for this BaseNode.
 func (b *BaseNode) updateHash(n Node) {
 	if n.Type() == HashT || n.Type() == EmptyT {
 		panic("can't update hash for empty or hash node")
 	}
-	b.hash = hash.DoubleSha256(b.getBytes(n))
+	b.hash = hash.DoubleKeccak256(b.getBytes(n))
 	b.hashValid = true
 }
 
-// updateCache updates the hash and bytes fields for this BaseNode.
+// updateCache updates hash and bytes fields for this BaseNode.
 func (b *BaseNode) updateBytes(n Node) {
 	bw := io.NewBufBinWriter()
 	bw.Grow(1 + n.Size())
@@ -82,16 +82,16 @@ func encodeBinaryAsChild(n Node, w *io.BinWriter) {
 		return
 	}
 	w.WriteB(byte(HashT))
-	w.WriteBytes(n.Hash().BytesBE())
+	w.WriteBytes(n.Hash().Bytes())
 }
 
-// encodeNodeWithType encodes the node together with its type.
+// encodeNodeWithType encodes node together with it's type.
 func encodeNodeWithType(n Node, w *io.BinWriter) {
 	w.WriteB(byte(n.Type()))
 	n.EncodeBinary(w)
 }
 
-// DecodeNodeWithType decodes the node together with its type.
+// DecodeNodeWithType decodes node together with it's type.
 func DecodeNodeWithType(r *io.BinReader) Node {
 	if r.Err != nil {
 		return nil

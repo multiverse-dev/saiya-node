@@ -1,324 +1,54 @@
 package dao
 
 import (
-	"encoding/binary"
-	"errors"
+	"encoding/json"
 	"testing"
 
-	"github.com/nspcc-dev/neo-go/internal/random"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/storage"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract/trigger"
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/nspcc-dev/neo-go/pkg/vm/opcode"
-	"github.com/nspcc-dev/neo-go/pkg/vm/stackitem"
-	"github.com/stretchr/testify/require"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/multiverse-dev/saiya/pkg/core/storage"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestPutGetAndDecode(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	serializable := &TestSerializable{field: random.String(4)}
-	hash := []byte{1}
-	require.NoError(t, dao.putWithBuffer(serializable, hash, io.NewBufBinWriter()))
-
-	gotAndDecoded := &TestSerializable{}
-	err := dao.GetAndDecode(gotAndDecoded, hash)
-	require.NoError(t, err)
+func TestStoreTx(t *testing.T) {
+	d := NewSimple(storage.NewMemoryStore())
+	tx := transaction.NewTx(&types.LegacyTx{})
+	receipt := &types.Receipt{}
+	err := d.StoreAsTransaction(tx, 0, receipt)
+	assert.NoError(t, err)
+	_, err = d.GetReceipt(tx.Hash())
+	assert.NoError(t, err)
+	txx, h, err := d.GetTransaction(tx.Hash())
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(0), h)
+	assert.True(t, txx.Hash() == tx.Hash())
 }
 
-// TestSerializable structure used in testing.
-type TestSerializable struct {
-	field string
+func TestReceipt(t *testing.T) {
+	j := `{"root":"0x","status":"0x0","cumulativeGasUsed":"0x186a0","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[],"transactionHash":"0x9f27c2aba7114513ec76cc4455feeed833ef064411b3f504199c0c5b80da44d4","contractAddress":"0x0000000000000000000000000000000000000000","gasUsed":"0x186a0","blockHash":"0x430079bc144da1d744f44d6ef830843d50ea610a5f71ed07f55545c4cdcda63d","blockNumber":"0x3","transactionIndex":"0x0"}`
+	r := &types.Receipt{}
+	err := json.Unmarshal([]byte(j), r)
+	assert.NoError(t, err)
+	assert.Equal(t, common.HexToHash("0x9f27c2aba7114513ec76cc4455feeed833ef064411b3f504199c0c5b80da44d4"), r.TxHash)
+	b, err := rlp.EncodeToBytes(r)
+	assert.NoError(t, err)
+	rr := &types.Receipt{}
+	err = rlp.DecodeBytes(b, rr)
+	assert.NoError(t, err)
+	assert.Equal(t, common.HexToHash("0x9f27c2aba7114513ec76cc4455feeed833ef064411b3f504199c0c5b80da44d4"), rr.TxHash)
 }
 
-func (t *TestSerializable) EncodeBinary(writer *io.BinWriter) {
-	writer.WriteString(t.field)
-}
-
-func (t *TestSerializable) DecodeBinary(reader *io.BinReader) {
-	t.field = reader.ReadString()
-}
-
-func TestPutGetStorageItem(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	id := int32(random.Int(0, 1024))
-	key := []byte{0}
-	storageItem := state.StorageItem{}
-	dao.PutStorageItem(id, key, storageItem)
-	gotStorageItem := dao.GetStorageItem(id, key)
-	require.Equal(t, storageItem, gotStorageItem)
-}
-
-func TestDeleteStorageItem(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	id := int32(random.Int(0, 1024))
-	key := []byte{0}
-	storageItem := state.StorageItem{}
-	dao.PutStorageItem(id, key, storageItem)
-	dao.DeleteStorageItem(id, key)
-	gotStorageItem := dao.GetStorageItem(id, key)
-	require.Nil(t, gotStorageItem)
-}
-
-func TestGetBlock_NotExists(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	hash := random.Uint256()
-	block, err := dao.GetBlock(hash)
-	require.Error(t, err)
-	require.Nil(t, block)
-}
-
-func TestPutGetBlock(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	b := &block.Block{
-		Header: block.Header{
-			Script: transaction.Witness{
-				VerificationScript: []byte{byte(opcode.PUSH1)},
-				InvocationScript:   []byte{byte(opcode.NOP)},
-			},
-		},
+func TestHeaderHashes(t *testing.T) {
+	d := NewSimple(storage.NewMemoryStore())
+	hashes := []common.Hash{
+		common.HexToHash("0x430079bc144da1d744f44d6ef830843d50ea610a5f71ed07f55545c4cdcda63d"),
+		common.Hash{},
 	}
-	hash := b.Hash()
-	appExecResult1 := &state.AppExecResult{
-		Container: hash,
-		Execution: state.Execution{
-			Trigger: trigger.OnPersist,
-			Events:  []state.NotificationEvent{},
-			Stack:   []stackitem.Item{},
-		},
-	}
-	appExecResult2 := &state.AppExecResult{
-		Container: hash,
-		Execution: state.Execution{
-			Trigger: trigger.PostPersist,
-			Events:  []state.NotificationEvent{},
-			Stack:   []stackitem.Item{},
-		},
-	}
-	err := dao.StoreAsBlock(b, appExecResult1, appExecResult2)
-	require.NoError(t, err)
-	gotBlock, err := dao.GetBlock(hash)
-	require.NoError(t, err)
-	require.NotNil(t, gotBlock)
-	gotAppExecResult, err := dao.GetAppExecResults(hash, trigger.All)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(gotAppExecResult))
-	require.Equal(t, *appExecResult1, gotAppExecResult[0])
-	require.Equal(t, *appExecResult2, gotAppExecResult[1])
-}
-
-func TestGetVersion_NoVersion(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	version, err := dao.GetVersion()
-	require.Error(t, err)
-	require.Equal(t, "", version.Value)
-}
-
-func TestGetVersion(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	expected := Version{
-		StoragePrefix:     0x42,
-		P2PSigExtensions:  true,
-		StateRootInHeader: true,
-		Value:             "testVersion",
-	}
-	dao.PutVersion(expected)
-	actual, err := dao.GetVersion()
-	require.NoError(t, err)
-	require.Equal(t, expected, actual)
-
-	t.Run("invalid", func(t *testing.T) {
-		dao := NewSimple(storage.NewMemoryStore(), false, false)
-		dao.Store.Put([]byte{byte(storage.SYSVersion)}, []byte("0.1.2\x00x"))
-
-		_, err := dao.GetVersion()
-		require.Error(t, err)
-	})
-	t.Run("old format", func(t *testing.T) {
-		dao := NewSimple(storage.NewMemoryStore(), false, false)
-		dao.Store.Put([]byte{byte(storage.SYSVersion)}, []byte("0.1.2"))
-
-		version, err := dao.GetVersion()
-		require.NoError(t, err)
-		require.Equal(t, "0.1.2", version.Value)
-	})
-}
-
-func TestGetCurrentHeaderHeight_NoHeader(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	height, err := dao.GetCurrentBlockHeight()
-	require.Error(t, err)
-	require.Equal(t, uint32(0), height)
-}
-
-func TestGetCurrentHeaderHeight_Store(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), false, false)
-	b := &block.Block{
-		Header: block.Header{
-			Script: transaction.Witness{
-				VerificationScript: []byte{byte(opcode.PUSH1)},
-				InvocationScript:   []byte{byte(opcode.NOP)},
-			},
-		},
-	}
-	dao.StoreAsCurrentBlock(b)
-	height, err := dao.GetCurrentBlockHeight()
-	require.NoError(t, err)
-	require.Equal(t, uint32(0), height)
-}
-
-func TestStoreAsTransaction(t *testing.T) {
-	t.Run("P2PSigExtensions off", func(t *testing.T) {
-		dao := NewSimple(storage.NewMemoryStore(), false, false)
-		tx := transaction.New([]byte{byte(opcode.PUSH1)}, 1)
-		tx.Signers = append(tx.Signers, transaction.Signer{})
-		tx.Scripts = append(tx.Scripts, transaction.Witness{})
-		hash := tx.Hash()
-		aer := &state.AppExecResult{
-			Container: hash,
-			Execution: state.Execution{
-				Trigger: trigger.Application,
-				Events:  []state.NotificationEvent{},
-				Stack:   []stackitem.Item{},
-			},
-		}
-		err := dao.StoreAsTransaction(tx, 0, aer)
-		require.NoError(t, err)
-		err = dao.HasTransaction(hash)
-		require.NotNil(t, err)
-		gotAppExecResult, err := dao.GetAppExecResults(hash, trigger.All)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(gotAppExecResult))
-		require.Equal(t, *aer, gotAppExecResult[0])
-	})
-
-	t.Run("P2PSigExtensions on", func(t *testing.T) {
-		dao := NewSimple(storage.NewMemoryStore(), false, true)
-		conflictsH := util.Uint256{1, 2, 3}
-		tx := transaction.New([]byte{byte(opcode.PUSH1)}, 1)
-		tx.Signers = append(tx.Signers, transaction.Signer{})
-		tx.Scripts = append(tx.Scripts, transaction.Witness{})
-		tx.Attributes = []transaction.Attribute{
-			{
-				Type:  transaction.ConflictsT,
-				Value: &transaction.Conflicts{Hash: conflictsH},
-			},
-		}
-		hash := tx.Hash()
-		aer := &state.AppExecResult{
-			Container: hash,
-			Execution: state.Execution{
-				Trigger: trigger.Application,
-				Events:  []state.NotificationEvent{},
-				Stack:   []stackitem.Item{},
-			},
-		}
-		err := dao.StoreAsTransaction(tx, 0, aer)
-		require.NoError(t, err)
-		err = dao.HasTransaction(hash)
-		require.True(t, errors.Is(err, ErrAlreadyExists))
-		err = dao.HasTransaction(conflictsH)
-		require.True(t, errors.Is(err, ErrHasConflicts))
-		gotAppExecResult, err := dao.GetAppExecResults(hash, trigger.All)
-		require.NoError(t, err)
-		require.Equal(t, 1, len(gotAppExecResult))
-		require.Equal(t, *aer, gotAppExecResult[0])
-	})
-}
-
-func BenchmarkStoreAsTransaction(b *testing.B) {
-	dao := NewSimple(storage.NewMemoryStore(), false, true)
-	tx := transaction.New([]byte{byte(opcode.PUSH1)}, 1)
-	tx.Attributes = []transaction.Attribute{
-		{
-			Type: transaction.ConflictsT,
-			Value: &transaction.Conflicts{
-				Hash: util.Uint256{1, 2, 3},
-			},
-		},
-		{
-			Type: transaction.ConflictsT,
-			Value: &transaction.Conflicts{
-				Hash: util.Uint256{4, 5, 6},
-			},
-		},
-		{
-			Type: transaction.ConflictsT,
-			Value: &transaction.Conflicts{
-				Hash: util.Uint256{7, 8, 9},
-			},
-		},
-	}
-	_ = tx.Hash()
-	aer := &state.AppExecResult{
-		Container: tx.Hash(),
-		Execution: state.Execution{
-			Trigger: trigger.Application,
-			Events:  []state.NotificationEvent{},
-			Stack:   []stackitem.Item{},
-		},
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	for n := 0; n < b.N; n++ {
-		err := dao.StoreAsTransaction(tx, 1, aer)
-		if err != nil {
-			b.FailNow()
-		}
-	}
-}
-
-func TestMakeStorageItemKey(t *testing.T) {
-	var id int32 = 5
-
-	dao := NewSimple(storage.NewMemoryStore(), true, false)
-
-	expected := []byte{byte(storage.STStorage), 0, 0, 0, 0, 1, 2, 3}
-	binary.LittleEndian.PutUint32(expected[1:5], uint32(id))
-	actual := dao.makeStorageItemKey(id, []byte{1, 2, 3})
-	require.Equal(t, expected, actual)
-
-	expected = expected[0:5]
-	actual = dao.makeStorageItemKey(id, nil)
-	require.Equal(t, expected, actual)
-
-	expected = []byte{byte(storage.STTempStorage), 0, 0, 0, 0, 1, 2, 3}
-	binary.LittleEndian.PutUint32(expected[1:5], uint32(id))
-	dao.Version.StoragePrefix = storage.STTempStorage
-	actual = dao.makeStorageItemKey(id, []byte{1, 2, 3})
-	require.Equal(t, expected, actual)
-}
-
-func TestPutGetStateSyncPoint(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), true, false)
-
-	// empty store
-	_, err := dao.GetStateSyncPoint()
-	require.Error(t, err)
-
-	// non-empty store
-	var expected uint32 = 5
-	dao.PutStateSyncPoint(expected)
-	actual, err := dao.GetStateSyncPoint()
-	require.NoError(t, err)
-	require.Equal(t, expected, actual)
-}
-
-func TestPutGetStateSyncCurrentBlockHeight(t *testing.T) {
-	dao := NewSimple(storage.NewMemoryStore(), true, false)
-
-	// empty store
-	_, err := dao.GetStateSyncCurrentBlockHeight()
-	require.Error(t, err)
-
-	// non-empty store
-	var expected uint32 = 5
-	dao.PutStateSyncCurrentBlockHeight(expected)
-	actual, err := dao.GetStateSyncCurrentBlockHeight()
-	require.NoError(t, err)
-	require.Equal(t, expected, actual)
+	err := d.StoreHeaderHashes(hashes, 1)
+	assert.NoError(t, err)
+	hs, err := d.GetHeaderHashes()
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(hs))
 }

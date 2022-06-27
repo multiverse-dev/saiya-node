@@ -4,18 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const (
-	// childrenCount represents the number of children of a branch node.
+	// childrenCount represents a number of children of a branch node.
 	childrenCount = 17
 	// lastChild is the index of the last child.
 	lastChild = childrenCount - 1
 )
 
-// BranchNode represents an MPT's branch node.
+// BranchNode represents MPT's branch node.
 type BranchNode struct {
 	BaseNode
 	Children [childrenCount]Node
@@ -23,7 +23,7 @@ type BranchNode struct {
 
 var _ Node = (*BranchNode)(nil)
 
-// NewBranchNode returns a new branch node.
+// NewBranchNode returns new branch node.
 func NewBranchNode() *BranchNode {
 	b := new(BranchNode)
 	for i := 0; i < childrenCount; i++ {
@@ -32,25 +32,25 @@ func NewBranchNode() *BranchNode {
 	return b
 }
 
-// Type implements the Node interface.
+// Type implements Node interface.
 func (b *BranchNode) Type() NodeType { return BranchT }
 
-// Hash implements the BaseNode interface.
-func (b *BranchNode) Hash() util.Uint256 {
+// Hash implements BaseNode interface.
+func (b *BranchNode) Hash() common.Hash {
 	return b.getHash(b)
 }
 
-// Bytes implements the BaseNode interface.
+// Bytes implements BaseNode interface.
 func (b *BranchNode) Bytes() []byte {
 	return b.getBytes(b)
 }
 
-// Size implements the Node interface.
+// Size implements Node interface.
 func (b *BranchNode) Size() int {
 	sz := childrenCount
 	for i := range b.Children {
 		if !isEmpty(b.Children[i]) {
-			sz += util.Uint256Size
+			sz += common.HashLength
 		}
 	}
 	return sz
@@ -72,12 +72,12 @@ func (b *BranchNode) DecodeBinary(r *io.BinReader) {
 	}
 }
 
-// MarshalJSON implements the json.Marshaler.
+// MarshalJSON implements json.Marshaler.
 func (b *BranchNode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(b.Children)
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (b *BranchNode) UnmarshalJSON(data []byte) error {
 	var obj NodeObject
 	if err := obj.UnmarshalJSON(data); err != nil {

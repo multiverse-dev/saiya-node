@@ -1,92 +1,106 @@
 package consensus
 
 import (
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/dbft/payload"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // prepareRequest represents dBFT prepareRequest message.
 type prepareRequest struct {
 	version           uint32
-	prevHash          util.Uint256
+	prevHash          common.Hash
 	timestamp         uint64
 	nonce             uint64
-	transactionHashes []util.Uint256
+	nextConsensus     common.Address
+	transactionHashes []common.Hash
 	stateRootEnabled  bool
-	stateRoot         util.Uint256
+	stateRoot         common.Hash
 }
 
 var _ payload.PrepareRequest = (*prepareRequest)(nil)
 
-// EncodeBinary implements the io.Serializable interface.
+// EncodeBinary implements io.Serializable interface.
 func (p *prepareRequest) EncodeBinary(w *io.BinWriter) {
 	w.WriteU32LE(p.version)
 	w.WriteBytes(p.prevHash[:])
 	w.WriteU64LE(p.timestamp)
 	w.WriteU64LE(p.nonce)
+	w.WriteBytes(p.nextConsensus[:])
 	w.WriteVarUint(uint64(len(p.transactionHashes)))
-	for i := range p.transactionHashes {
-		w.WriteBytes(p.transactionHashes[i][:])
+	for _, h := range p.transactionHashes {
+		w.WriteBytes(h[:])
 	}
 	if p.stateRootEnabled {
 		w.WriteBytes(p.stateRoot[:])
 	}
 }
 
-// DecodeBinary implements the io.Serializable interface.
+// DecodeBinary implements io.Serializable interface.
 func (p *prepareRequest) DecodeBinary(r *io.BinReader) {
 	p.version = r.ReadU32LE()
 	r.ReadBytes(p.prevHash[:])
 	p.timestamp = r.ReadU64LE()
 	p.nonce = r.ReadU64LE()
-	r.ReadArray(&p.transactionHashes, block.MaxTransactionsPerBlock)
+	r.ReadBytes(p.nextConsensus[:])
+	count := r.ReadVarUint()
+	if count > block.MaxTransactionsPerBlock {
+		count = block.MaxTransactionsPerBlock
+	}
+	p.transactionHashes = make([]common.Hash, count)
+	for i := uint64(0); i < count; i++ {
+		r.ReadBytes(p.transactionHashes[i][:])
+	}
 	if p.stateRootEnabled {
 		r.ReadBytes(p.stateRoot[:])
 	}
 }
 
-// Version implements the payload.PrepareRequest interface.
+// Version implements payload.PrepareRequest interface.
 func (p prepareRequest) Version() uint32 {
 	return p.version
 }
 
-// SetVersion implements the payload.PrepareRequest interface.
+// SetVersion implements payload.PrepareRequest interface.
 func (p *prepareRequest) SetVersion(v uint32) {
 	p.version = v
 }
 
-// PrevHash implements the payload.PrepareRequest interface.
-func (p prepareRequest) PrevHash() util.Uint256 {
+// PrevHash implements payload.PrepareRequest interface.
+func (p prepareRequest) PrevHash() common.Hash {
 	return p.prevHash
 }
 
-// SetPrevHash implements the payload.PrepareRequest interface.
-func (p *prepareRequest) SetPrevHash(h util.Uint256) {
+// SetPrevHash implements payload.PrepareRequest interface.
+func (p *prepareRequest) SetPrevHash(h common.Hash) {
 	p.prevHash = h
 }
 
-// Timestamp implements the payload.PrepareRequest interface.
+// Timestamp implements payload.PrepareRequest interface.
 func (p *prepareRequest) Timestamp() uint64 { return p.timestamp * nsInMs }
 
-// SetTimestamp implements the payload.PrepareRequest interface.
+// SetTimestamp implements payload.PrepareRequest interface.
 func (p *prepareRequest) SetTimestamp(ts uint64) { p.timestamp = ts / nsInMs }
 
-// Nonce implements the payload.PrepareRequest interface.
+// Nonce implements payload.PrepareRequest interface.
 func (p *prepareRequest) Nonce() uint64 { return p.nonce }
 
-// SetNonce implements the payload.PrepareRequest interface.
+// SetNonce implements payload.PrepareRequest interface.
 func (p *prepareRequest) SetNonce(nonce uint64) { p.nonce = nonce }
 
-// TransactionHashes implements the payload.PrepareRequest interface.
-func (p *prepareRequest) TransactionHashes() []util.Uint256 { return p.transactionHashes }
+// TransactionHashes implements payload.PrepareRequest interface.
+func (p *prepareRequest) TransactionHashes() []common.Hash { return p.transactionHashes }
 
-// SetTransactionHashes implements the payload.PrepareRequest interface.
-func (p *prepareRequest) SetTransactionHashes(hs []util.Uint256) { p.transactionHashes = hs }
+// SetTransactionHashes implements payload.PrepareRequest interface.
+func (p *prepareRequest) SetTransactionHashes(hs []common.Hash) { p.transactionHashes = hs }
 
-// NextConsensus implements the payload.PrepareRequest interface.
-func (p *prepareRequest) NextConsensus() util.Uint160 { return util.Uint160{} }
+// NextConsensus implements payload.PrepareRequest interface.
+func (p *prepareRequest) NextConsensus() common.Address {
+	return p.nextConsensus
+}
 
-// SetNextConsensus implements the payload.PrepareRequest interface.
-func (p *prepareRequest) SetNextConsensus(_ util.Uint160) {}
+// SetNextConsensus implements payload.PrepareRequest interface.
+func (p *prepareRequest) SetNextConsensus(address common.Address) {
+	p.nextConsensus = address
+}

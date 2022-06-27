@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
 	"github.com/pierrec/lz4"
 )
 
@@ -21,9 +21,6 @@ func compress(source []byte) ([]byte, error) {
 
 // decompress decompresses bytes using lz4.
 func decompress(source []byte) ([]byte, error) {
-	if len(source) < 4 {
-		return nil, errors.New("invalid compressed payload")
-	}
 	length := binary.LittleEndian.Uint32(source[:4])
 	if length > payload.MaxSize {
 		return nil, errors.New("invalid uncompressed payload length")

@@ -7,7 +7,7 @@ var stateHeight = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Help:      "Current verified state height",
 		Name:      "current_state_height",
-		Namespace: "neogo",
+		Namespace: "saiya",
 	},
 )
 

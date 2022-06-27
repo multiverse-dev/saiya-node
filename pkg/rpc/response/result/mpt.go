@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // StateHeight is a result of getstateheight RPC.
@@ -14,7 +14,7 @@ type StateHeight struct {
 	Validated uint32 `json:"validatedrootindex"`
 }
 
-// ProofWithKey represens a key-proof pair.
+// ProofWithKey represens key-proof pair.
 type ProofWithKey struct {
 	Key   []byte
 	Proof [][]byte
@@ -26,7 +26,7 @@ type VerifyProof struct {
 	Value []byte
 }
 
-// MarshalJSON implements the json.Marshaler.
+// MarshalJSON implements json.Marshaler.
 func (p *ProofWithKey) MarshalJSON() ([]byte, error) {
 	w := io.NewBufBinWriter()
 	p.EncodeBinary(w.BinWriter)
@@ -54,7 +54,7 @@ func (p *ProofWithKey) DecodeBinary(r *io.BinReader) {
 	}
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (p *ProofWithKey) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -81,7 +81,7 @@ func (p *ProofWithKey) FromString(s string) error {
 	return r.Err
 }
 
-// MarshalJSON implements the json.Marshaler.
+// MarshalJSON implements json.Marshaler.
 func (p *VerifyProof) MarshalJSON() ([]byte, error) {
 	if p.Value == nil {
 		return []byte(`"invalid"`), nil
@@ -89,7 +89,7 @@ func (p *VerifyProof) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + base64.StdEncoding.EncodeToString(p.Value) + `"`), nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler.
+// UnmarshalJSON implements json.Unmarshaler.
 func (p *VerifyProof) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, []byte(`"invalid"`)) {
 		p.Value = nil

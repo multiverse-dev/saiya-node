@@ -12,10 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/request"
-	"github.com/nspcc-dev/neo-go/pkg/rpc/response"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/native"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
+	"github.com/multiverse-dev/saiya/pkg/rpc/request"
+	"github.com/multiverse-dev/saiya/pkg/rpc/response"
 	"go.uber.org/atomic"
 )
 
@@ -26,9 +27,6 @@ const (
 	cacheTimeout = 100
 )
 
-// Client represents the middleman for executing JSON RPC calls
-// to remote NEO RPC nodes. Client is thread-safe and can be used from
-// multiple goroutines.
 type Client struct {
 	cli      *http.Client
 	endpoint *url.URL
@@ -37,20 +35,20 @@ type Client struct {
 	requestF func(*request.Raw) (*response.Raw, error)
 
 	cacheLock sync.RWMutex
-	// cache stores RPC node related information the client is bound to.
+	// cache stores RPC node related information client is bound to.
 	// cache is mostly filled in during Init(), but can also be updated
 	// during regular Client lifecycle.
 	cache cache
 
 	latestReqID *atomic.Uint64
-	// getNextRequestID returns an ID to be used for the subsequent request creation.
-	// It is defined on Client, so that our testing code can override this method
-	// for the sake of more predictable request IDs generation behavior.
+	// getNextRequestID returns ID to be used for subsequent request creation.
+	// It is defined on Client so that our testing code can override this method
+	// for the sake of more predictable request IDs generation behaviour.
 	getNextRequestID func() uint64
 }
 
 // Options defines options for the RPC client.
-// All values are optional. If any duration is not specified,
+// All values are optional. If any duration is not specified
 // a default of 4 seconds will be used.
 type Options struct {
 	// Cert is a client-side certificate, it doesn't work at the moment along
@@ -67,13 +65,12 @@ type Options struct {
 // cache stores cache values for the RPC client methods.
 type cache struct {
 	initDone                 bool
-	network                  netmode.Magic
-	stateRootInHeader        bool
+	chainId                  uint64
 	calculateValidUntilBlock calculateValidUntilBlockCache
-	nativeHashes             map[string]util.Uint160
+	nativeHashes             map[string]common.Address
 }
 
-// calculateValidUntilBlockCache stores a cached number of validators and
+// calculateValidUntilBlockCache stores cached number of validators and
 // cache expiration value in blocks.
 type calculateValidUntilBlockCache struct {
 	validatorsCount uint32
@@ -123,7 +120,7 @@ func initClient(ctx context.Context, cl *Client, endpoint string, opts Options) 
 	cl.cli = httpClient
 	cl.endpoint = url
 	cl.cache = cache{
-		nativeHashes: make(map[string]util.Uint160),
+		nativeHashes: make(map[string]common.Address),
 	}
 	cl.latestReqID = atomic.NewUint64(0)
 	cl.getNextRequestID = (cl).getRequestID
@@ -136,33 +133,21 @@ func (c *Client) getRequestID() uint64 {
 	return c.latestReqID.Inc()
 }
 
-// Init sets magic of the network client connected to, stateRootInHeader option
-// and native NEO, GAS and Policy contracts scripthashes. This method should be
-// called before any header- or block-related requests in order to deserialize
-// responses properly.
 func (c *Client) Init() error {
 	version, err := c.GetVersion()
 	if err != nil {
 		return fmt.Errorf("failed to get network magic: %w", err)
 	}
-	natives, err := c.GetNativeContracts()
-	if err != nil {
-		return fmt.Errorf("failed to get native contracts: %w", err)
-	}
 
 	c.cacheLock.Lock()
 	defer c.cacheLock.Unlock()
 
-	c.cache.network = version.Protocol.Network
-	c.cache.stateRootInHeader = version.Protocol.StateRootInHeader
+	c.cache.chainId = version.Protocol.ChainID
 	if version.Protocol.MillisecondsPerBlock == 0 {
-		c.cache.network = version.Magic
-		c.cache.stateRootInHeader = version.StateRootInHeader
+		c.cache.chainId = version.ChainID
 	}
-	for _, ctr := range natives {
-		c.cache.nativeHashes[ctr.Manifest.Name] = ctr.Hash
-	}
-
+	c.cache.nativeHashes[nativenames.GAS] = native.GASAddress
+	c.cache.nativeHashes[nativenames.Policy] = native.PolicyAddress
 	c.cache.initDone = true
 	return nil
 }
@@ -176,7 +161,6 @@ func (c *Client) performRequest(method string, p request.RawParams, v interface{
 	}
 
 	raw, err := c.requestF(&r)
-
 	if raw != nil && raw.Error != nil {
 		return raw.Error
 	} else if err != nil {
@@ -207,8 +191,8 @@ func (c *Client) makeHTTPRequest(r *request.Raw) (*response.Raw, error) {
 	}
 	defer resp.Body.Close()
 
-	// The node might send us a proper JSON anyway, so look there first and if
-	// it parses, it has more relevant data than HTTP error code.
+	// The node might send us proper JSON anyway, so look there first and if
+	// it parses, then it has more relevant data than HTTP error code.
 	err = json.NewDecoder(resp.Body).Decode(raw)
 	if err != nil {
 		if resp.StatusCode != http.StatusOK {
@@ -223,8 +207,8 @@ func (c *Client) makeHTTPRequest(r *request.Raw) (*response.Raw, error) {
 	return raw, nil
 }
 
-// Ping attempts to create a connection to the endpoint
-// and returns an error if there is any.
+// Ping attempts to create a connection to the endpoint.
+// and returns an error if there is one.
 func (c *Client) Ping() error {
 	conn, err := net.DialTimeout("tcp", c.endpoint.Host, defaultDialTimeout)
 	if err != nil {

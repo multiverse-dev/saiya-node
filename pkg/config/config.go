@@ -4,21 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/rpc"
-	"gopkg.in/yaml.v3"
+	"github.com/multiverse-dev/saiya/pkg/config/netmode"
+	"github.com/multiverse-dev/saiya/pkg/rpc"
+	"gopkg.in/yaml.v2"
 )
 
-const (
-	// UserAgentWrapper is a string that user agent string should be wrapped into.
-	UserAgentWrapper = "/"
-	// UserAgentPrefix is a prefix used to generate user agent string.
-	UserAgentPrefix = "NEO-GO:"
-	// UserAgentFormat is a formatted string used to generate user agent string.
-	UserAgentFormat = UserAgentWrapper + UserAgentPrefix + "%s" + UserAgentWrapper
-)
+const userAgentFormat = "/saiya:%s/"
 
-// Version is the version of the node, set at the build time.
+// Version the version of the node, set at build time.
 var Version string
 
 // Config top level struct representing the config
@@ -28,15 +21,15 @@ type Config struct {
 	ApplicationConfiguration ApplicationConfiguration `yaml:"ApplicationConfiguration"`
 }
 
-// GenerateUserAgent creates a user agent string based on the build time environment.
+// GenerateUserAgent creates user agent string based on build time environment.
 func (c Config) GenerateUserAgent() string {
-	return fmt.Sprintf(UserAgentFormat, Version)
+	return fmt.Sprintf(userAgentFormat, Version)
 }
 
 // Load attempts to load the config from the given
 // path for the given netMode.
-func Load(path string, netMode netmode.Magic) (Config, error) {
-	configPath := fmt.Sprintf("%s/protocol.%s.yml", path, netMode)
+func Load(path string, chainId uint64) (Config, error) {
+	configPath := fmt.Sprintf("%s/protocol.%s.yml", path, netmode.String(chainId))
 	return LoadFile(configPath)
 }
 
@@ -58,7 +51,7 @@ func LoadFile(configPath string) (Config, error) {
 			RPC: rpc.Config{
 				MaxIteratorResultItems: 100,
 				MaxFindResultItems:     100,
-				MaxNEP11Tokens:         100,
+				MaxERC721Tokens:        100,
 			},
 		},
 	}

@@ -1,8 +1,8 @@
 package payload
 
-import "github.com/nspcc-dev/neo-go/pkg/io"
+import "github.com/multiverse-dev/saiya/pkg/io"
 
-// MaxSize is the maximum payload size in decompressed form.
+// MaxSize is maximum payload size in decompressed form.
 const MaxSize = 0x02000000
 
 // Payload is anything that can be binary encoded/decoded.
@@ -19,8 +19,8 @@ func NewNullPayload() NullPayload {
 	return NullPayload{}
 }
 
-// DecodeBinary implements the Serializable interface.
+// DecodeBinary implements Serializable interface.
 func (p NullPayload) DecodeBinary(r *io.BinReader) {}
 
-// EncodeBinary implements the Serializable interface.
+// EncodeBinary implements Serializable interface.
 func (p NullPayload) EncodeBinary(w *io.BinWriter) {}

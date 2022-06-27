@@ -5,38 +5,38 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/hash"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
 )
 
 // Ledger is enough of Blockchain to satisfy Pool.
 type Ledger interface {
 	BlockHeight() uint32
-	IsExtensibleAllowed(util.Uint160) bool
-	VerifyWitness(util.Uint160, hash.Hashable, *transaction.Witness, int64) (int64, error)
+	IsExtensibleAllowed(common.Address) bool
+	VerifyWitness(common.Address, hash.Hashable, *transaction.Witness) error
 }
 
-// Pool represents a pool of extensible payloads.
+// Pool represents pool of extensible payloads.
 type Pool struct {
 	lock     sync.RWMutex
-	verified map[util.Uint256]*list.Element
-	senders  map[util.Uint160]*list.List
-	// singleCap represents the maximum number of payloads from a single sender.
+	verified map[common.Hash]*list.Element
+	senders  map[common.Address]*list.List
+	// singleCap represents maximum number of payloads from the single sender.
 	singleCap int
 	chain     Ledger
 }
 
-// New returns a new payload pool using the provided chain.
+// New returns new payload pool using provided chain.
 func New(bc Ledger, capacity int) *Pool {
 	if capacity <= 0 {
 		panic("invalid capacity")
 	}
 
 	return &Pool{
-		verified:  make(map[util.Uint256]*list.Element),
-		senders:   make(map[util.Uint160]*list.List),
+		verified:  make(map[common.Hash]*list.Element),
+		senders:   make(map[common.Address]*list.List),
 		singleCap: capacity,
 		chain:     bc,
 	}
@@ -47,9 +47,9 @@ var (
 	errInvalidHeight    = errors.New("invalid height")
 )
 
-// Add adds an extensible payload to the pool.
-// First return value specifies if the payload was new.
-// Second one is nil if and only if the payload is valid.
+// Add adds extensible payload to the pool.
+// First return value specifies if payload was new.
+// Second one is nil if and only if payload is valid.
 func (p *Pool) Add(e *payload.Extensible) (bool, error) {
 	if ok, err := p.verify(e); err != nil || !ok {
 		return ok, err
@@ -71,19 +71,18 @@ func (p *Pool) Add(e *payload.Extensible) (bool, error) {
 		lst = list.New()
 		p.senders[e.Sender] = lst
 	}
-
 	p.verified[h] = lst.PushBack(e)
 	return true, nil
 }
 
 func (p *Pool) verify(e *payload.Extensible) (bool, error) {
-	if _, err := p.chain.VerifyWitness(e.Sender, e, &e.Witness, extensibleVerifyMaxGAS); err != nil {
+	if err := p.chain.VerifyWitness(e.Sender, e, &e.Witness); err != nil {
 		return false, err
 	}
 	h := p.chain.BlockHeight()
 	if h < e.ValidBlockStart || e.ValidBlockEnd <= h {
-		// We can receive a consensus payload for the last or next block
-		// which leads to an unwanted node disconnect.
+		// We can receive consensus payload for the last or next block
+		// which leads to unwanted node disconnect.
 		if e.ValidBlockEnd == h {
 			return false, nil
 		}
@@ -96,7 +95,7 @@ func (p *Pool) verify(e *payload.Extensible) (bool, error) {
 }
 
 // Get returns payload by hash.
-func (p *Pool) Get(h util.Uint256) *payload.Extensible {
+func (p *Pool) Get(h common.Hash) *payload.Extensible {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
@@ -104,7 +103,11 @@ func (p *Pool) Get(h util.Uint256) *payload.Extensible {
 	if !ok {
 		return nil
 	}
-	return elem.Value.(*payload.Extensible)
+	payload, ok := elem.Value.(*payload.Extensible)
+	if !ok {
+		return nil
+	}
+	return payload
 }
 
 const extensibleVerifyMaxGAS = 6000000
@@ -126,7 +129,7 @@ func (p *Pool) RemoveStale(index uint32) {
 				lst.Remove(old)
 				continue
 			}
-			if _, err := p.chain.VerifyWitness(e.Sender, e, &e.Witness, extensibleVerifyMaxGAS); err != nil {
+			if err := p.chain.VerifyWitness(e.Sender, e, &e.Witness); err != nil {
 				delete(p.verified, h)
 				lst.Remove(old)
 				continue

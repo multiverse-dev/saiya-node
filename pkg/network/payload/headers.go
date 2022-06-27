@@ -4,29 +4,27 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 // Headers payload.
 type Headers struct {
 	Hdrs []*block.Header
-	// StateRootInHeader specifies whether the header contains a state root.
-	StateRootInHeader bool
 }
 
-// Users can at most request 2k headers.
+// Users can at most request 2k header.
 const (
 	MaxHeadersAllowed = 2000
 )
 
-// ErrTooManyHeaders is an error returned when too many headers have been received.
+// ErrTooManyHeaders is an error returned when too many headers were received.
 var ErrTooManyHeaders = fmt.Errorf("too many headers were received (max: %d)", MaxHeadersAllowed)
 
 // ErrNoHeaders is returned for zero-elements Headers payload which is considered to be invalid.
 var ErrNoHeaders = errors.New("no headers (zero length array)")
 
-// DecodeBinary implements the Serializable interface.
+// DecodeBinary implements Serializable interface.
 func (p *Headers) DecodeBinary(br *io.BinReader) {
 	lenHeaders := br.ReadVarUint()
 
@@ -46,7 +44,6 @@ func (p *Headers) DecodeBinary(br *io.BinReader) {
 
 	for i := 0; i < int(lenHeaders); i++ {
 		header := &block.Header{}
-		header.StateRootEnabled = p.StateRootInHeader
 		header.DecodeBinary(br)
 		p.Hdrs[i] = header
 	}
@@ -56,7 +53,7 @@ func (p *Headers) DecodeBinary(br *io.BinReader) {
 	}
 }
 
-// EncodeBinary implements the Serializable interface.
+// EncodeBinary implements Serializable interface.
 func (p *Headers) EncodeBinary(bw *io.BinWriter) {
 	bw.WriteArray(p.Hdrs)
 }

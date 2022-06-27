@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 type (
-	// Header wrapper used for a representation of
-	// the block header on the RPC Server.
+	// Header wrapper used for the representation of
+	// block header on the RPC Server.
 	Header struct {
 		block.Header
 		BlockMetadata
@@ -23,19 +24,19 @@ func NewHeader(h *block.Header, chain LedgerAux) Header {
 	res := Header{
 		Header: *h,
 		BlockMetadata: BlockMetadata{
-			Size:          io.GetVarSize(h),
-			Confirmations: chain.BlockHeight() - h.Index + 1,
+			Size:          hexutil.Uint(io.GetVarSize(h)),
+			Confirmations: hexutil.Uint(chain.BlockHeight() - h.Index + 1),
 		},
 	}
 
 	hash := chain.GetHeaderHash(int(h.Index) + 1)
-	if !hash.Equals(util.Uint256{}) {
+	if hash != (common.Hash{}) {
 		res.NextBlockHash = &hash
 	}
 	return res
 }
 
-// MarshalJSON implements the json.Marshaler interface.
+// MarshalJSON implements json.Marshaler interface.
 func (h Header) MarshalJSON() ([]byte, error) {
 	output, err := json.Marshal(h.BlockMetadata)
 	if err != nil {
@@ -57,7 +58,7 @@ func (h Header) MarshalJSON() ([]byte, error) {
 	return output, nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (h *Header) UnmarshalJSON(data []byte) error {
 	// As block.Block and BlockMetadata are at the same level in json,
 	// do unmarshalling separately for both structs.

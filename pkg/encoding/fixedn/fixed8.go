@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const (
@@ -42,13 +42,13 @@ func (f Fixed8) FloatValue() float64 {
 	return float64(f) / decimals
 }
 
-// IntegralValue returns an integer part of the original value representing
+// IntegralValue returns integer part of the original value representing
 // Fixed8 as int64.
 func (f Fixed8) IntegralValue() int64 {
 	return int64(f) / decimals
 }
 
-// FractionalValue returns a decimal part of the original value. It has the same
+// FractionalValue returns decimal part of the original value. It has the same
 // sign as f, so that f = f.IntegralValue() + f.FractionalValue().
 func (f Fixed8) FractionalValue() int32 {
 	return int32(int64(f) % decimals)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nspcc-dev/neo-go/pkg/util/slice"
+	"github.com/multiverse-dev/saiya/pkg/util/slice"
 )
 
 // MemCachedStore is a wrapper around persistent store that caches all changes
@@ -105,12 +105,13 @@ func (s *MemCachedStore) Get(key []byte) ([]byte, error) {
 }
 
 // Put puts new KV pair into the store.
-func (s *MemCachedStore) Put(key, value []byte) {
+func (s *MemCachedStore) Put(key, value []byte) error {
 	newKey := string(key)
 	vcopy := slice.Copy(value)
 	s.lock()
 	put(s.chooseMap(key), newKey, vcopy)
 	s.unlock()
+	return nil
 }
 
 // Delete drops KV pair from the store. Never returns an error.
@@ -153,8 +154,7 @@ func (s *MemCachedStore) PutChangeSet(puts map[string][]byte, stores map[string]
 
 // Seek implements the Store interface.
 func (s *MemCachedStore) Seek(rng SeekRange, f func(k, v []byte) bool) {
-	ps, memRes := s.prepareSeekMemSnapshot(rng)
-	performSeek(context.Background(), ps, memRes, rng, false, f)
+	s.seek(context.Background(), rng, false, f)
 }
 
 // GetStorageChanges returns all current storage changes. It can only be done for private
@@ -171,9 +171,8 @@ func (s *MemCachedStore) GetStorageChanges() map[string][]byte {
 // that key-value items are sorted by key in ascending way.
 func (s *MemCachedStore) SeekAsync(ctx context.Context, rng SeekRange, cutPrefix bool) chan KeyValue {
 	res := make(chan KeyValue)
-	ps, memRes := s.prepareSeekMemSnapshot(rng)
 	go func() {
-		performSeek(ctx, ps, memRes, rng, cutPrefix, func(k, v []byte) bool {
+		s.seek(ctx, rng, cutPrefix, func(k, v []byte) bool {
 			select {
 			case <-ctx.Done():
 				return false
@@ -187,10 +186,13 @@ func (s *MemCachedStore) SeekAsync(ctx context.Context, rng SeekRange, cutPrefix
 	return res
 }
 
-// prepareSeekMemSnapshot prepares memory store snapshot of `stor`/`mem` in order
-// not to hold the lock over MemCachedStore throughout the whole Seek operation.
-// The results of prepareSeekMemSnapshot can be safely used as performSeek arguments.
-func (s *MemCachedStore) prepareSeekMemSnapshot(rng SeekRange) (Store, []KeyValueExists) {
+// seek is internal representations of Seek* capable of seeking for the given key
+// and supporting early stop using provided context. `cutPrefix` denotes whether provided
+// key needs to be cut off the resulting keys. `rng` specifies prefix items must match
+// and point to start seeking from. Backwards seeking from some point is supported
+// with corresponding `rng` field set.
+func (s *MemCachedStore) seek(ctx context.Context, rng SeekRange, cutPrefix bool, f func(k, v []byte) bool) {
+	// Create memory store `mem` and `del` snapshot not to hold the lock.
 	var memRes []KeyValueExists
 	sPrefix := string(rng.Prefix)
 	lPrefix := len(sPrefix)
@@ -219,19 +221,6 @@ func (s *MemCachedStore) prepareSeekMemSnapshot(rng SeekRange) (Store, []KeyValu
 	}
 	ps := s.ps
 	s.runlock()
-	return ps, memRes
-}
-
-// performSeek is internal representations of Seek* capable of seeking for the given key
-// and supporting early stop using provided context. `ps` is a captured underlying
-// persistent storage. `memRes` is a snapshot of suitable cached items prepared
-// by prepareSeekMemSnapshot.
-//
-// `cutPrefix` denotes whether provided key needs to be cut off the resulting keys.
-// `rng` specifies prefix items must match and point to start seeking from. Backwards
-// seeking from some point is supported with corresponding `rng` field set.
-func performSeek(ctx context.Context, ps Store, memRes []KeyValueExists, rng SeekRange, cutPrefix bool, f func(k, v []byte) bool) {
-	lPrefix := len(string(rng.Prefix))
 	less := func(k1, k2 []byte) bool {
 		res := bytes.Compare(k1, k2)
 		return res != 0 && rng.Backwards == (res > 0)
@@ -377,6 +366,7 @@ func (s *MemCachedStore) persist(isSync bool) (int, error) {
 	if !isSync {
 		s.mut.Unlock()
 	}
+
 	err = tempstore.ps.PutChangeSet(tempstore.mem, tempstore.stor)
 
 	if !isSync {

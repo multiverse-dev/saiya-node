@@ -8,7 +8,7 @@ var (
 		prometheus.GaugeOpts{
 			Help:      "Mempool Unsorted TXs",
 			Name:      "mempool_unsorted_tx",
-			Namespace: "neogo",
+			Namespace: "saiya",
 		},
 	)
 )

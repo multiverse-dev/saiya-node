@@ -5,20 +5,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspcc-dev/neo-go/pkg/config"
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/core/block"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/stateroot"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/wallet"
+	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/stateroot"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
+	"github.com/multiverse-dev/saiya/pkg/io"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"go.uber.org/zap"
 )
 
 type (
-	// Ledger is an interface to Blockchain sufficient for Service.
+	// Ledger is the interface to Blockchain sufficient for Service.
 	Ledger interface {
 		GetConfig() config.ProtocolConfiguration
 		HeaderHeight() uint32
@@ -26,9 +25,8 @@ type (
 		UnsubscribeFromBlocks(ch chan<- *block.Block)
 	}
 
-	// Service represents a state root service.
+	// Service represents state root service.
 	Service interface {
-		Name() string
 		OnPayload(p *payload.Extensible) error
 		AddSignature(height uint32, validatorIndex int32, sig []byte) error
 		GetConfig() config.StateRoot
@@ -41,7 +39,7 @@ type (
 		chain Ledger
 
 		MainCfg config.StateRoot
-		Network netmode.Magic
+		ChainID uint64
 
 		log       *zap.Logger
 		accMtx    sync.RWMutex
@@ -62,16 +60,16 @@ type (
 )
 
 const (
-	// Category is a message category for extensible payloads.
+	// Category is message category for extensible payloads.
 	Category = "StateService"
 )
 
-// New returns a new state root service instance using the underlying module.
+// New returns new state root service instance using underlying module.
 func New(cfg config.StateRoot, sm *stateroot.Module, log *zap.Logger, bc Ledger, cb RelayCallback) (Service, error) {
 	bcConf := bc.GetConfig()
 	s := &service{
 		Module:          sm,
-		Network:         bcConf.Magic,
+		ChainID:         bcConf.ChainID,
 		chain:           bc,
 		log:             log,
 		incompleteRoots: make(map[uint32]*incompleteRoot),
@@ -84,9 +82,6 @@ func New(cfg config.StateRoot, sm *stateroot.Module, log *zap.Logger, bc Ledger,
 
 	s.MainCfg = cfg
 	if cfg.Enabled {
-		if bcConf.StateRootInHeader {
-			return nil, errors.New("`StateRootInHeader` should be disabled when state service is enabled")
-		}
 		var err error
 		w := cfg.UnlockWallet
 		if s.wallet, err = wallet.NewWalletFromFile(w.Path); err != nil {

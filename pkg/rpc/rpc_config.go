@@ -1,7 +1,8 @@
 package rpc
 
 import (
-	"github.com/nspcc-dev/neo-go/pkg/encoding/fixedn"
+	"github.com/multiverse-dev/saiya/pkg/encoding/fixedn"
+	"github.com/multiverse-dev/saiya/pkg/wallet"
 )
 
 type (
@@ -10,15 +11,15 @@ type (
 		Address              string `yaml:"Address"`
 		Enabled              bool   `yaml:"Enabled"`
 		EnableCORSWorkaround bool   `yaml:"EnableCORSWorkaround"`
-		// MaxGasInvoke is the maximum amount of GAS which
-		// can be spent during an RPC call.
+		// MaxGasInvoke is a maximum amount of gas which
+		// can be spent during RPC call.
 		MaxGasInvoke           fixedn.Fixed8 `yaml:"MaxGasInvoke"`
 		MaxIteratorResultItems int           `yaml:"MaxIteratorResultItems"`
 		MaxFindResultItems     int           `yaml:"MaxFindResultItems"`
-		MaxNEP11Tokens         int           `yaml:"MaxNEP11Tokens"`
+		MaxERC721Tokens        int           `yaml:"MaxERC721Tokens"`
 		Port                   uint16        `yaml:"Port"`
-		StartWhenSynchronized  bool          `yaml:"StartWhenSynchronized"`
 		TLSConfig              TLSConfig     `yaml:"TLSConfig"`
+		Wallet                 wallet.Wallet
 	}
 
 	// TLSConfig describes SSL/TLS configuration.

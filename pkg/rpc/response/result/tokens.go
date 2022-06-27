@@ -1,80 +1,80 @@
 package result
 
 import (
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
 )
 
-// NEP11Balances is a result for the getnep11balances RPC call.
-type NEP11Balances struct {
-	Balances []NEP11AssetBalance `json:"balance"`
-	Address  string              `json:"address"`
+// ERC721Balances is a result for the getERC721balances RPC call.
+type ERC721Balances struct {
+	Balances []ERC721AssetBalance `json:"balance"`
+	Address  string               `json:"address"`
 }
 
-// NEP11Balance is a structure holding balance of a NEP-11 asset.
-type NEP11AssetBalance struct {
-	Asset  util.Uint160        `json:"assethash"`
-	Tokens []NEP11TokenBalance `json:"tokens"`
+// ERC721Balance is a structure holding balance of a NEP-11 asset.
+type ERC721AssetBalance struct {
+	Asset  common.Address         `json:"assethash"`
+	Tokens []ERC721TokenBalance `json:"tokens"`
 }
 
-// NEP11TokenBalance represents balance of a single NFT.
-type NEP11TokenBalance struct {
+// ERC721TokenBalance represents balance of a single NFT.
+type ERC721TokenBalance struct {
 	ID          string `json:"tokenid"`
 	Amount      string `json:"amount"`
 	LastUpdated uint32 `json:"lastupdatedblock"`
 }
 
-// NEP17Balances is a result for the getnep17balances RPC call.
-type NEP17Balances struct {
-	Balances []NEP17Balance `json:"balance"`
+// ERC20Balances is a result for the getERC20balances RPC call.
+type ERC20Balances struct {
+	Balances []ERC20Balance `json:"balance"`
 	Address  string         `json:"address"`
 }
 
-// NEP17Balance represents balance for the single token contract.
-type NEP17Balance struct {
-	Asset       util.Uint160 `json:"assethash"`
+// ERC20Balance represents balance for the single token contract.
+type ERC20Balance struct {
+	Asset       common.Address `json:"assethash"`
 	Amount      string       `json:"amount"`
 	LastUpdated uint32       `json:"lastupdatedblock"`
 }
 
-// NEP11Transfers is a result for the getnep11transfers RPC.
-type NEP11Transfers struct {
-	Sent     []NEP11Transfer `json:"sent"`
-	Received []NEP11Transfer `json:"received"`
-	Address  string          `json:"address"`
+// ERC721Transfers is a result for the getERC721transfers RPC.
+type ERC721Transfers struct {
+	Sent     []ERC721Transfer `json:"sent"`
+	Received []ERC721Transfer `json:"received"`
+	Address  string           `json:"address"`
 }
 
-// NEP11Transfer represents single NEP-11 transfer event.
-type NEP11Transfer struct {
+// ERC721Transfer represents single NEP-11 transfer event.
+type ERC721Transfer struct {
 	Timestamp   uint64       `json:"timestamp"`
-	Asset       util.Uint160 `json:"assethash"`
+	Asset       common.Address `json:"assethash"`
 	Address     string       `json:"transferaddress,omitempty"`
 	ID          string       `json:"tokenid"`
 	Amount      string       `json:"amount"`
 	Index       uint32       `json:"blockindex"`
 	NotifyIndex uint32       `json:"transfernotifyindex"`
-	TxHash      util.Uint256 `json:"txhash"`
+	TxHash      common.Hash `json:"txhash"`
 }
 
-// NEP17Transfers is a result for the getnep17transfers RPC.
-type NEP17Transfers struct {
-	Sent     []NEP17Transfer `json:"sent"`
-	Received []NEP17Transfer `json:"received"`
+// ERC20Transfers is a result for the getERC20transfers RPC.
+type ERC20Transfers struct {
+	Sent     []ERC20Transfer `json:"sent"`
+	Received []ERC20Transfer `json:"received"`
 	Address  string          `json:"address"`
 }
 
-// NEP17Transfer represents single NEP17 transfer event.
-type NEP17Transfer struct {
+// ERC20Transfer represents single ERC20 transfer event.
+type ERC20Transfer struct {
 	Timestamp   uint64       `json:"timestamp"`
-	Asset       util.Uint160 `json:"assethash"`
+	Asset       common.Address `json:"assethash"`
 	Address     string       `json:"transferaddress,omitempty"`
 	Amount      string       `json:"amount"`
 	Index       uint32       `json:"blockindex"`
 	NotifyIndex uint32       `json:"transfernotifyindex"`
-	TxHash      util.Uint256 `json:"txhash"`
+	TxHash      common.Hash `json:"txhash"`
 }
 
-// KnownNEP11Properties contains a list of well-known NEP-11 token property names.
-var KnownNEP11Properties = map[string]bool{
+// KnownERC721Properties contains a list of well-known NEP-11 token property names.
+var KnownERC721Properties = map[string]bool{
 	"description": true,
 	"image":       true,
 	"name":        true,

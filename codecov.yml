@@ -1,3 +1,0 @@
-codecov:
-  require_ci_to_pass: no # We have several CI jobs that upload codecov results,
-                         # and sometimes some of them may fail, it's OK.

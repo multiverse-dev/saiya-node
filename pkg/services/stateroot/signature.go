@@ -3,14 +3,12 @@ package stateroot
 import (
 	"sync"
 
-	"github.com/nspcc-dev/neo-go/pkg/config/netmode"
-	"github.com/nspcc-dev/neo-go/pkg/core/state"
-	"github.com/nspcc-dev/neo-go/pkg/core/transaction"
-	"github.com/nspcc-dev/neo-go/pkg/crypto/keys"
-	"github.com/nspcc-dev/neo-go/pkg/io"
-	"github.com/nspcc-dev/neo-go/pkg/network/payload"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
-	"github.com/nspcc-dev/neo-go/pkg/vm/emit"
+	"github.com/multiverse-dev/saiya/pkg/consensus"
+	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
+	"github.com/multiverse-dev/saiya/pkg/crypto"
+	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
+	"github.com/multiverse-dev/saiya/pkg/network/payload"
 )
 
 type (
@@ -18,11 +16,11 @@ type (
 		sync.RWMutex
 		// svList is a list of state validator keys for this stateroot.
 		svList keys.PublicKeys
-		// isSent is true if the state root was already broadcasted.
+		// isSent is true state root was already broadcasted.
 		isSent bool
-		// request is an oracle request.
+		// request is oracle request.
 		root *state.MPTRoot
-		// sigs contains a signature from every oracle node.
+		// sigs contains signature from every oracle node.
 		sigs map[string]*rootSig
 		// myIndex is the index of validator for this root.
 		myIndex int
@@ -33,19 +31,19 @@ type (
 	}
 
 	rootSig struct {
-		// pub is a cached public key.
+		// pub is cached public key.
 		pub *keys.PublicKey
-		// ok is true if the signature was verified.
+		// ok is true if signature was verified.
 		ok bool
-		// sig is a state root signature.
+		// sig is state root signature.
 		sig []byte
 	}
 )
 
-func (r *incompleteRoot) reverify(net netmode.Magic) {
+func (r *incompleteRoot) reverify(chainId uint64) {
 	for _, sig := range r.sigs {
 		if !sig.ok {
-			sig.ok = sig.pub.VerifyHashable(sig.sig, uint32(net), r.root)
+			sig.ok = sig.pub.VerifyHashable(sig.sig, chainId, r.root)
 		}
 	}
 }
@@ -73,14 +71,14 @@ func (r *incompleteRoot) isSenderNow() bool {
 	return ind == r.myIndex
 }
 
-// finalize checks if either main or backup tx has sufficient number of signatures and returns
+// finalize checks is either main or backup tx has sufficient number of signatures and returns
 // tx and bool value indicating if it is ready to be broadcasted.
 func (r *incompleteRoot) finalize() (*state.MPTRoot, bool) {
 	if r.root == nil {
 		return nil, false
 	}
 
-	m := smartcontract.GetDefaultHonestNodeCount(len(r.svList))
+	m := consensus.GetDefaultHonestNodeCount(len(r.svList))
 	sigs := make([][]byte, 0, m)
 	for _, pub := range r.svList {
 		sig, ok := r.sigs[string(pub.Bytes())]
@@ -94,18 +92,14 @@ func (r *incompleteRoot) finalize() (*state.MPTRoot, bool) {
 	if len(sigs) != m {
 		return nil, false
 	}
-
-	verif, err := smartcontract.CreateDefaultMultiSigRedeemScript(r.svList)
+	verification, err := r.svList.CreateDefaultMultiSigRedeemScript()
 	if err != nil {
 		return nil, false
 	}
-	w := io.NewBufBinWriter()
-	for i := range sigs {
-		emit.Bytes(w.BinWriter, sigs[i])
+	invocation := crypto.CreateMultiInvocationScript(sigs)
+	r.root.Witness = transaction.Witness{
+		VerificationScript: verification,
+		InvocationScript:   invocation,
 	}
-	r.root.Witness = []transaction.Witness{{
-		InvocationScript:   w.Bytes(),
-		VerificationScript: verif,
-	}}
 	return r.root, true
 }

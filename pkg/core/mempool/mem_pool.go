@@ -91,11 +91,10 @@ func (p item) CompareTo(otherP item) int {
 	}
 	if p.txn.Gas() > otherP.txn.Gas() {
 		return 1
+	} else if p.txn.Gas() < otherP.txn.Gas() {
+		return -1
 	}
-	if p.txn.Gas() == otherP.txn.Gas() {
-		return 0
-	}
-	return -1
+	return p.txn.Hash().Big().Cmp(otherP.txn.Hash().Big())
 }
 
 // Count returns the total number of uncofirm transactions.

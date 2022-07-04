@@ -328,7 +328,11 @@ func (p *Param) GetHash() (common.Hash, error) {
 	if err != nil {
 		return common.Hash{}, err
 	}
-	return common.HexToHash(s), nil
+	hash := common.HexToHash(s)
+	if hash == (common.Hash{}) {
+		return common.Hash{}, errors.New("invalid hash")
+	}
+	return hash, nil
 }
 
 // GetUint160FromHex returns Uint160 value of the parameter encoded in hex.
@@ -337,7 +341,11 @@ func (p *Param) GetAddressFromHex() (common.Address, error) {
 	if err != nil {
 		return common.Address{}, err
 	}
-	return common.HexToAddress(s), nil
+	addr := common.HexToAddress(s)
+	if addr == (common.Address{}) {
+		return common.Address{}, errors.New("invalid address")
+	}
+	return addr, nil
 }
 
 // GetBytesHex returns []byte value of the parameter if

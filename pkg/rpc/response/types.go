@@ -14,7 +14,7 @@ type Header struct {
 // to construct type-specific responses.
 type HeaderAndError struct {
 	Header
-	Error *Error `json:"error,omitempty"`
+	Error *Error `json:"error"`
 }
 
 // Raw represents a standard raw JSON-RPC 2.0
@@ -34,7 +34,7 @@ type AbstractResult interface {
 // that Result field is an interface here.
 type Abstract struct {
 	HeaderAndError
-	Result interface{} `json:"result,omitempty"`
+	Result interface{} `json:"result"`
 }
 
 // RunForErrors implements AbstractResult interface.
@@ -42,6 +42,19 @@ func (a Abstract) RunForErrors(f func(jsonErr *Error)) {
 	if a.Error != nil {
 		f(a.Error)
 	}
+}
+
+func (a Abstract) MarshalJSON() ([]byte, error) {
+	if a.HeaderAndError.Error != nil {
+		return json.Marshal(a.HeaderAndError)
+	}
+	return json.Marshal(struct {
+		Header
+		Result interface{} `json:"result"`
+	}{
+		Header: a.Header,
+		Result: a.Result,
+	})
 }
 
 // AbstractBatch represents abstract JSON-RPC 2.0 batch-response.

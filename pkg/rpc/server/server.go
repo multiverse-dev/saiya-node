@@ -573,7 +573,7 @@ func (s *Server) eth_getBalance(params request.Params) (interface{}, *response.E
 	}
 	addr, err := param.GetAddressFromHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	balance := s.chain.GetUtilityTokenBalance(addr)
 	return hexutil.EncodeBig(balance), nil
@@ -586,7 +586,7 @@ func (s *Server) eth_getStorageAt(params request.Params) (interface{}, *response
 	}
 	addr, err := param.GetAddressFromHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	param = params.Value(1)
 	if param == nil {
@@ -608,7 +608,7 @@ func (s *Server) eth_getTransactionCount(params request.Params) (interface{}, *r
 	}
 	addr, err := param.GetAddressFromHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	return hexutil.EncodeUint64(s.chain.GetNonce(addr)), nil
 }
@@ -620,7 +620,7 @@ func (s *Server) eth_getBlockTransactionCountByHash(params request.Params) (inte
 	}
 	hash, err := param.GetHash()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid hash", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	b, err := s.chain.GetBlock(hash, false)
 	if err != nil {
@@ -639,7 +639,7 @@ func (s *Server) eth_getBlockTransactionCountByNumber(params request.Params) (in
 	}
 	num, err := param.GetString()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid number", err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid number: %s", err), err)
 	}
 	index, err := hexutil.DecodeUint64(num)
 	if err != nil {
@@ -663,7 +663,7 @@ func (s *Server) eth_getCode(params request.Params) (interface{}, *response.Erro
 	}
 	addr, err := param.GetAddressFromHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid address or Hash160", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	cs := s.chain.GetContractState(addr)
 	if cs == nil {
@@ -697,12 +697,12 @@ func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) 
 	}
 	data, err := hexutil.Decode(text)
 	if err != nil {
-		return nil, response.NewInvalidParamsError("Could not decode hex text", err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("Could not decode hex text: %s", err), err)
 	}
 	hash := accounts.TextHash(data)
 	sig, err := crypto.Sign(hash, &acc.PrivateKey().PrivateKey)
 	if err != nil {
-		return nil, response.NewInternalServerError("Failed sign tx", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Failed sign tx: %s", err), err)
 	}
 	return hexutil.Encode(sig), nil
 }
@@ -732,12 +732,12 @@ func (s *Server) eth_signTransaction(params request.Params) (interface{}, *respo
 	tx.EthFrom = txObj.From
 	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not get current block", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
 	}
 	ic, err := s.chain.GetTestVM(tx, fakeBlock)
 	if err != nil {
 		if err != nil {
-			return nil, response.NewInternalServerError("Could not create execute context", err)
+			return nil, response.NewInternalServerError(fmt.Sprintf("Could not create execute context: %s", err), err)
 		}
 	}
 	var left uint64
@@ -747,16 +747,16 @@ func (s *Server) eth_signTransaction(params request.Params) (interface{}, *respo
 		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
 	}
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not executing data", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
 	inner.Gas = evm.TestGas - left
 	err = acc.SignTx(s.chainId, tx)
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not sign tx", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not sign tx: %s", err), err)
 	}
 	raw, err := io.ToByteArray(tx)
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not serialize tx", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not serialize tx: %s", err), err)
 	}
 	return hexutil.Encode(raw), nil
 }
@@ -774,7 +774,7 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 	}
 	acc := s.getWalletAccount(txObj.From)
 	if acc == nil {
-		return nil, response.NewInternalServerError("Could not found accout to sign tx", errors.New("account not found"))
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not found accout to sign tx: %s", err), errors.New("account not found"))
 	}
 	inner := &types.LegacyTx{
 		Nonce:    s.chain.GetNonce(txObj.From),
@@ -787,12 +787,12 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 	tx.EthFrom = txObj.From
 	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not get current block", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
 	}
 	ic, err := s.chain.GetTestVM(tx, fakeBlock)
 	if err != nil {
 		if err != nil {
-			return nil, response.NewInternalServerError("Could not create execute context", err)
+			return nil, response.NewInternalServerError(fmt.Sprintf("Could not create execute context: %s", err), err)
 		}
 	}
 	var left uint64
@@ -802,17 +802,17 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
 	}
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not executing data", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
 	inner.Gas = evm.TestGas - left
 	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
 	inner.Gas += netfee
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not calculate network fee", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not calculate network fee: %s", err), err)
 	}
 	err = acc.SignTx(s.chainId, tx)
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not sign tx", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not sign tx: %s", err), err)
 	}
 	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
 }
@@ -823,14 +823,14 @@ func (s *Server) eth_sendRawTransaction(params request.Params) (interface{}, *re
 	}
 	rawTx, err := params[0].GetBytesHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid hex", err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid hex: %s", err), err)
 	}
 	bw := io.NewBufBinWriter()
 	bw.WriteB(transaction.EthLegacyTxType)
 	bw.WriteVarBytes(rawTx)
 	tx, err := transaction.NewTransactionFromBytes(bw.Bytes())
 	if err != nil {
-		return nil, response.NewInvalidParamsError("can't decode transaction", err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("can't decode transaction: %s", err), err)
 	}
 	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
 }
@@ -858,12 +858,12 @@ func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) 
 	tx.EthFrom = txObj.From
 	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not get current block", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
 	}
 	ic, err := s.chain.GetTestVM(tx, block)
 	if err != nil {
 		if err != nil {
-			return nil, response.NewInternalServerError("Could not create execute context", err)
+			return nil, response.NewInternalServerError(fmt.Sprintf("Could not create execute context: %s", err), err)
 		}
 	}
 	var ret []byte
@@ -873,7 +873,7 @@ func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) 
 		ret, _, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
 	}
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not executing data", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
 	return hexutil.Encode(ret), nil
 }
@@ -884,7 +884,7 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 	txObj := result.TransactionObject{}
 	err := json.Unmarshal(data, &txObj)
 	if err != nil {
-		return nil, response.NewInvalidParamsError("Could not unmarshal tx object", err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("Could not unmarshal tx object: %s", err), err)
 	}
 	inner := &types.LegacyTx{
 		Nonce:    s.chain.GetNonce(txObj.From) + 1,
@@ -897,13 +897,13 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 	tx.EthFrom = txObj.From
 	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not get current block", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
 	}
 	fakeBlock := *block
 	ic, err := s.chain.GetTestVM(tx, &fakeBlock)
 	if err != nil {
 		if err != nil {
-			return nil, response.NewInternalServerError("Could not create execute context", err)
+			return nil, response.NewInternalServerError(fmt.Sprintf("Could not create execute context: %s", err), err)
 		}
 	}
 	var left uint64
@@ -913,13 +913,13 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
 	}
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not executing data: "+err.Error(), err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
 	inner.Gas = evm.TestGas - left
 	feePerByte := s.chain.GetFeePerByte()
 	netfee := transaction.CalculateNetworkFee(tx, feePerByte)
 	if err != nil {
-		return nil, response.NewInvalidRequestError("Could not calculate network fee", err)
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not calculate network fee: %s", err), err)
 	}
 	inner.Gas += netfee + params.SstoreSentryGasEIP2200
 	return hexutil.EncodeUint64(inner.Gas), nil
@@ -929,7 +929,7 @@ func (s *Server) eth_getBlockByHash(params request.Params) (interface{}, *respon
 	param0 := params.Value(0)
 	hash, err := param0.GetHash()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("invalid hash", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	full := true
 	param1 := params.Value(1)
@@ -973,7 +973,7 @@ func (s *Server) eth_getBlockByNumber(params request.Params) (interface{}, *resp
 	if param1 != nil {
 		full, err = param1.GetBoolean()
 		if err != nil {
-			return nil, response.NewInvalidParamsError("", err)
+			return nil, response.NewInvalidParamsError(fmt.Sprintf("%s", err), err)
 		}
 	}
 	block, err := s.chain.GetBlock(hash, full)
@@ -996,7 +996,7 @@ func (s *Server) eth_getTransactionByHash(params request.Params) (interface{}, *
 		if errors.Is(err, storage.ErrKeyNotFound) {
 			return nil, nil
 		}
-		return nil, response.NewInternalServerError("Failed to get tx", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Failed to get tx: %s", err), err)
 	}
 	//pending
 	if height == math.MaxUint32 {
@@ -1036,14 +1036,14 @@ func (s *Server) eth_getTransactionByBlockHashAndIndex(params request.Params) (i
 	txHash := block.Transactions[index].Hash()
 	tx, _, err := s.chain.GetTransaction(txHash)
 	if err != nil {
-		return nil, response.NewInternalServerError("Failed to get tx", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Failed to get tx: %s", err), err)
 	}
 	receipt, err := s.chain.GetReceipt(block.Transactions[index].Hash())
 	if err != nil {
 		if errors.Is(err, storage.ErrKeyNotFound) {
 			return nil, nil
 		}
-		return nil, response.NewRPCError("Failed to get receipt for the transaction", err.Error(), err)
+		return nil, response.NewRPCError(fmt.Sprintf("Failed to get receipt for the transaction: %s", err), err.Error(), err)
 	}
 	return result.NewTransactionOutputRaw(tx, &block.Header, receipt), nil
 }
@@ -1075,7 +1075,7 @@ func (s *Server) eth_getTransactionByBlockNumberAndIndex(params request.Params) 
 	txHash := block.Transactions[index].Hash()
 	tx, _, err := s.chain.GetTransaction(txHash)
 	if err != nil {
-		return nil, response.NewInternalServerError("Failed to get tx", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Failed to get tx: %s", err), err)
 	}
 	receipt, err := s.chain.GetReceipt(block.Transactions[index].Hash())
 	if err != nil {
@@ -1094,7 +1094,7 @@ func (s *Server) eth_getTransactionReceipt(params request.Params) (interface{}, 
 	}
 	receipt, err := s.chain.GetReceipt(txHash)
 	if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
-		return nil, response.NewRPCError("Failed to get receipt", err.Error(), err)
+		return nil, response.NewRPCError(fmt.Sprintf("Failed to get receipt: %s", err), err.Error(), err)
 	}
 	return receipt, nil
 }
@@ -1136,7 +1136,7 @@ func (s *Server) eth_getLogs(params request.Params) (interface{}, *response.Erro
 	}
 	logs, err := s.chain.GetLogs(filter)
 	if err != nil {
-		return nil, response.NewInternalServerError("Could not get logs", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get logs: %s", err), err)
 	}
 	return logs, nil
 }
@@ -1731,7 +1731,7 @@ func (s *Server) isBlocked(reqParams request.Params) (interface{}, *response.Err
 	}
 	addr, err := para1.GetAddressFromHex()
 	if err != nil {
-		return nil, response.NewInternalServerError("can't parse address", err)
+		return nil, response.NewInternalServerError(err.Error(), err)
 	}
 	r := s.chain.IsBlocked(addr)
 	return r, nil
@@ -2073,13 +2073,13 @@ func (s *Server) writeHTTPServerResponse(r *request.Request, w http.ResponseWrit
 	resp.RunForErrors(func(jsonErr *response.Error) {
 		s.logRequestError(r, jsonErr)
 	})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if r.In != nil {
 		resp := resp.(response.Abstract)
 		if resp.Error != nil {
 			w.WriteHeader(resp.Error.HTTPCode)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if s.config.EnableCORSWorkaround {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With")

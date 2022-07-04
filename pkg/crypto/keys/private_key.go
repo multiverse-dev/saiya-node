@@ -20,7 +20,7 @@ type PrivateKey struct {
 	ecdsa.PrivateKey
 }
 
-// NewPrivateKey creates a new random Secp256r1 private key.
+// NewPrivateKey creates a new random Secp256k1 private key.
 func NewPrivateKey() (*PrivateKey, error) {
 	return newPrivateKeyOnCurve(btcec.S256())
 }
@@ -77,7 +77,7 @@ func NewPrivateKeyFromASN1(b []byte) (*PrivateKey, error) {
 	return &PrivateKey{*privkey}, nil
 }
 
-// PublicKey derives the public key from the private key.
+// PublicKey derives the uncompressed public key from the private key.
 func (p *PrivateKey) PublicKey() *PublicKey {
 	result := PublicKey(p.PrivateKey.PublicKey)
 	return &result

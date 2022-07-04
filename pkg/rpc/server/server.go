@@ -99,9 +99,6 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"eth_protocolVersion":                     (*Server).eth_protocolVersion,
 	"eth_chainId":                             (*Server).eth_chainId,
 	"eth_syncing":                             (*Server).eth_syncing,
-	"eth_coinbase":                            (*Server).eth_coinbase, //TODO
-	"eth_mining":                              (*Server).eth_mining,
-	"eth_hashrate":                            (*Server).eth_hashrate,
 	"eth_gasPrice":                            (*Server).eth_gasPrice,
 	"eth_accounts":                            (*Server).eth_accounts,
 	"eth_blockNumber":                         (*Server).eth_blockNumber,
@@ -110,8 +107,6 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"eth_getTransactionCount":                 (*Server).eth_getTransactionCount,
 	"eth_getBlockTransactionCountByHash":      (*Server).eth_getBlockTransactionCountByHash,
 	"eth_getBlockTransactionCountByNumber":    (*Server).eth_getBlockTransactionCountByNumber,
-	"eth_getUncleCountByBlockHash":            (*Server).eth_getUncleCountByBlockHash,
-	"eth_getUncleCountByBlockNumber":          (*Server).eth_getUncleCountByBlockNumber,
 	"eth_getCode":                             (*Server).eth_getCode,
 	"eth_sign":                                (*Server).eth_sign,
 	"eth_signTransaction":                     (*Server).eth_signTransaction,
@@ -125,11 +120,6 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"eth_getTransactionByBlockHashAndIndex":   (*Server).eth_getTransactionByBlockHashAndIndex,
 	"eth_getTransactionByBlockNumberAndIndex": (*Server).eth_getTransactionByBlockNumberAndIndex,
 	"eth_getTransactionReceipt":               (*Server).eth_getTransactionReceipt,
-	"eth_getUncleByBlockHashAndIndex":         (*Server).eth_getUncleByBlockHashAndIndex,
-	"eth_getCompilers":                        (*Server).eth_getCompilers,
-	"eth_compileSolidity":                     (*Server).eth_compileSolidity,
-	"eth_compileLLL":                          (*Server).eth_compileLLL,
-	"eth_compileSerpent":                      (*Server).eth_compileSerpent,
 	"eth_newFilter":                           (*Server).eth_newFilter,
 	"eth_newBlockFilter":                      (*Server).eth_newBlockFilter,
 	"eth_newPendingTransactionFilter":         (*Server).eth_newPendingTransactionFilter,
@@ -137,9 +127,6 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"eth_getFilterChanges":                    (*Server).eth_getFilterChanges,
 	"eth_getFilterLogs":                       (*Server).eth_getFilterLogs,
 	"eth_getLogs":                             (*Server).eth_getLogs,
-	"eth_getWork":                             (*Server).eth_getWork,
-	"eth_submitWork":                          (*Server).eth_submitWork,
-	"eth_submitHashrate":                      (*Server).eth_submitHashrate,
 	// -- end eth api
 	"getversion":           (*Server).getVersion,
 	"calculatenetworkfee":  (*Server).calculateNetworkFee,
@@ -563,23 +550,6 @@ func (s *Server) eth_syncing(_ request.Params) (interface{}, *response.Error) {
 	}, nil
 }
 
-func (s *Server) eth_coinbase(_ request.Params) (interface{}, *response.Error) {
-	if s.accounts != nil {
-		return s.accounts[0].Address, nil
-	}
-	return nil, nil
-}
-
-// we don't use POW so return FALSE as default
-func (s *Server) eth_mining(_ request.Params) (interface{}, *response.Error) {
-	return false, nil
-}
-
-// we don't use POW so return 0 as default
-func (s *Server) eth_hashrate(_ request.Params) (interface{}, *response.Error) {
-	return "0x0", nil
-}
-
 func (s *Server) eth_gasPrice(_ request.Params) (interface{}, *response.Error) {
 	return hexutil.EncodeBig(s.chain.GetGasPrice()), nil
 }
@@ -685,16 +655,6 @@ func (s *Server) eth_getBlockTransactionCountByNumber(params request.Params) (in
 		return nil, response.NewInternalServerError(fmt.Sprintf("Problem locating block with hash: %s", hash), err)
 	}
 	return hexutil.EncodeUint64(uint64(len(b.Transactions))), nil
-}
-
-// Unsupported, there isn't uncle blocks in saiya
-func (s *Server) eth_getUncleCountByBlockHash(_ request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("There are no uncle blocks in Saiya", errors.New("not supported"))
-}
-
-// Unsupported, there isn't uncle blocks in saiya
-func (s *Server) eth_getUncleCountByBlockNumber(_ request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("There are no uncle blocks in Saiya", errors.New("not supported"))
 }
 
 func (s *Server) eth_getCode(params request.Params) (interface{}, *response.Error) {
@@ -1148,27 +1108,6 @@ func (s *Server) eth_getTransactionReceipt(params request.Params) (interface{}, 
 	return receipt, nil
 }
 
-// Unsupported, there isn't uncle blocks in saiya
-func (s *Server) eth_getUncleByBlockHashAndIndex(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("There are no uncle blocks in saiya", errors.New("not supported"))
-}
-
-func (s *Server) eth_getCompilers(params request.Params) (interface{}, *response.Error) {
-	return "[]", nil
-}
-
-func (s *Server) eth_compileSolidity(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("No solidity compiler", errors.New("not supported"))
-}
-
-func (s *Server) eth_compileLLL(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("No LLL compiler", errors.New("not supported"))
-}
-
-func (s *Server) eth_compileSerpent(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("No Serpent compiler", errors.New("not supported"))
-}
-
 func (s *Server) eth_newFilter(params request.Params) (interface{}, *response.Error) {
 	return nil, response.NewInternalServerError("Umimplemented", errors.New("umimplemented"))
 }
@@ -1209,21 +1148,6 @@ func (s *Server) eth_getLogs(params request.Params) (interface{}, *response.Erro
 		return nil, response.NewInternalServerError("Could not get logs", err)
 	}
 	return logs, nil
-}
-
-// Unsupported, saiya doesn't use POW
-func (s *Server) eth_getWork(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("We don't use POW", errors.New("not supported"))
-}
-
-// Unsupported, saiya doesn't use POW
-func (s *Server) eth_submitWork(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("We don't use POW", errors.New("not supported"))
-}
-
-// Unsupported, saiya doesn't use POW
-func (s *Server) eth_submitHashrate(params request.Params) (interface{}, *response.Error) {
-	return nil, response.NewInternalServerError("There is no hash rate", errors.New("not supported"))
 }
 
 // -- end eth api.

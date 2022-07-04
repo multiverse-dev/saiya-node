@@ -15,7 +15,6 @@ import (
 	"github.com/multiverse-dev/saiya/cli/input"
 	"github.com/multiverse-dev/saiya/cli/options"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
-	"github.com/multiverse-dev/saiya/pkg/encoding/address"
 	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"github.com/urfave/cli"
 )
@@ -446,7 +445,7 @@ func dumpKeys(ctx *cli.Context) error {
 		fmt.Fprintln(ctx.App.Writer, hex.EncodeToString(acc.PublicKey))
 		hasPrinted = true
 		if addrFlag.IsSet {
-			return cli.NewExitError(fmt.Errorf("unknown script type for address %s", address.AddressToBase58(addrFlag.Address())), 1)
+			return cli.NewExitError(fmt.Errorf("unknown script type for address %s", addrFlag.Address()), 1)
 		}
 	}
 	return nil

@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/multiverse-dev/saiya/pkg/encoding/address"
 )
 
 // Token represents imported token contract.
@@ -23,9 +22,4 @@ func NewToken(tokenHash common.Address, name, symbol string, decimals int64, sta
 		Symbol:   symbol,
 		Standard: standardName,
 	}
-}
-
-// Address returns token address from hash.
-func (t *Token) Address() string {
-	return address.AddressToBase58(t.Hash)
 }

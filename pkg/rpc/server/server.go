@@ -31,7 +31,6 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/storage"
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
-	"github.com/multiverse-dev/saiya/pkg/encoding/address"
 	"github.com/multiverse-dev/saiya/pkg/evm"
 	"github.com/multiverse-dev/saiya/pkg/io"
 	"github.com/multiverse-dev/saiya/pkg/network"
@@ -677,11 +676,7 @@ func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) 
 	if s.accounts == nil {
 		return nil, response.NewInternalServerError("No wallet opened", errors.New("wallet not open"))
 	}
-	param := params.Value(0)
-	if param == nil {
-		return nil, response.ErrInvalidParams
-	}
-	saddr, err := param.GetString()
+	saddr, err := params.Value(0).GetString()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -696,7 +691,7 @@ func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) 
 	if acc == nil {
 		return nil, response.NewInternalServerError("Account not found", errors.New("account not found"))
 	}
-	text, err := param.GetString()
+	text, err := params.Value(1).GetString()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -705,7 +700,7 @@ func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) 
 		return nil, response.NewInvalidParamsError("Could not decode hex text", err)
 	}
 	hash := accounts.TextHash(data)
-	sig, err := crypto.Sign(hash, &s.accounts[0].PrivateKey().PrivateKey)
+	sig, err := crypto.Sign(hash, &acc.PrivateKey().PrivateKey)
 	if err != nil {
 		return nil, response.NewInternalServerError("Failed sign tx", err)
 	}
@@ -956,11 +951,7 @@ func (s *Server) eth_getBlockByHash(params request.Params) (interface{}, *respon
 }
 
 func (s *Server) eth_getBlockByNumber(params request.Params) (interface{}, *response.Error) {
-	param0 := params.Value(0)
-	if param0 == nil {
-		return nil, response.ErrInvalidParams
-	}
-	sh, err := param0.GetString()
+	sh, err := params.Value(0).GetString()
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
@@ -1153,7 +1144,7 @@ func (s *Server) eth_getLogs(params request.Params) (interface{}, *response.Erro
 // -- end eth api.
 
 func (s *Server) getBestBlockHash(_ request.Params) (interface{}, *response.Error) {
-	return "0x" + s.chain.CurrentBlockHash().String(), nil
+	return s.chain.CurrentBlockHash().String(), nil
 }
 
 func (s *Server) getBlockCount(_ request.Params) (interface{}, *response.Error) {
@@ -1277,7 +1268,7 @@ func (s *Server) validateAddress(reqParams request.Params) (interface{}, *respon
 
 	return result.ValidateAddress{
 		Address: reqParams.Value(0),
-		IsValid: validateAddress(param),
+		IsValid: common.IsHexAddress(param),
 	}, nil
 }
 
@@ -2108,12 +2099,4 @@ func (s *Server) writeHTTPServerResponse(r *request.Request, w http.ResponseWrit
 				zap.String("err", err.Error()))
 		}
 	}
-}
-
-func validateAddress(addr interface{}) bool {
-	if addr, ok := addr.(string); ok {
-		_, err := address.Base58ToAddress(addr)
-		return err == nil
-	}
-	return false
 }

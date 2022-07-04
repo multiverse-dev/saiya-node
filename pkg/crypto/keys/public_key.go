@@ -16,7 +16,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
-	"github.com/multiverse-dev/saiya/pkg/encoding/address"
 	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
@@ -359,10 +358,6 @@ func (p PublicKey) CreateVerificationScript() []byte {
 
 func (p PublicKey) Address() common.Address {
 	return crypto.PubkeyToAddress(ecdsa.PublicKey(p))
-}
-
-func (p PublicKey) Base58Address() string {
-	return address.AddressToBase58(p.GetScriptHash())
 }
 
 // Verify returns true if the signature is valid and corresponds

@@ -9,10 +9,7 @@ import (
 
 var Prefix byte = 0x32
 
-func AddressToBase58(u common.Address) string {
-	b := append([]byte{Prefix}, u.Bytes()...)
-	return base58.CheckEncode(b)
-}
+
 
 func Base58ToAddress(s string) (u common.Address, err error) {
 	b, err := base58.CheckDecode(s)

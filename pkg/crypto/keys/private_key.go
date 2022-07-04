@@ -88,11 +88,6 @@ func (p *PrivateKey) Address() common.Address {
 	return pk.Address()
 }
 
-func (p *PrivateKey) Base58Address() string {
-	pk := p.PublicKey()
-	return pk.Base58Address()
-}
-
 // GetScriptHash returns verification script hash for public key associated with
 // the private key.
 func (p *PrivateKey) GetScriptHash() common.Address {

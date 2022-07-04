@@ -8,14 +8,14 @@ import (
 type Contract struct {
 	Address  common.Address `json:"address"`
 	CodeHash common.Hash    `json:"codeHash"`
-	Code     []byte         `json:"code"`
+	Code     []byte         `json:"code,omitempty"`
 }
 
 // NativeContract holds information about native contract.
 type NativeContract struct {
 	Name string `json:"name"`
 	Contract
-	UpdateHistory []uint32 `json:"updatehistory"`
+	UpdateHistory []uint32 `json:"updatehistory,omitempty"`
 }
 
 func (c *Contract) EncodeBinary(bw *io.BinWriter) {

@@ -2,11 +2,14 @@ ProtocolConfiguration:
   ChainID: 253
   MaxTraceableBlocks: 200000
   InitialSAIYASupply: 100000000
+  KeepOnlyLatestState: false
+  MaxBlockSize: 262144
+  MaxBlockGas: 900000000000
+  MaxTransactionsPerBlock: 512
   SecondsPerBlock: 15
   MemPoolSize: 50000
+  ValidatorsCount: 1
   StandbyCommittee:
-    - 03b426e8ead09fc034f0b74becd3a4db682782c36b437ce2a7b96464b26d76d181
-  StandbyValidators:
     - 03b426e8ead09fc034f0b74becd3a4db682782c36b437ce2a7b96464b26d76d181
   SeedList:
     - 127.0.0.1:20303

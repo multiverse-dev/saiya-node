@@ -29,6 +29,10 @@ func NewBinReaderFromBuf(b []byte) *BinReader {
 	return NewBinReaderFromIO(r)
 }
 
+func (r *BinReader) ReadByte() (byte, error) {
+	return r.ReadB(), r.Err
+}
+
 // Len returns the number of bytes of the unread portion of the buffer if
 // reading from bytes.Reader or -1 otherwise.
 func (r *BinReader) Len() int {

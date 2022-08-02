@@ -5,11 +5,10 @@ type Role byte
 
 // Role enumeration.
 const (
-	Validator      Role = 0
-	Committee      Role = 1
-	StateValidator Role = 2
+	Committee      Role = 0
+	StateValidator Role = 1
 )
 
 func IsValid(r Role) bool {
-	return r == Committee || r == Validator || r == StateValidator
+	return r == Committee || r == StateValidator
 }

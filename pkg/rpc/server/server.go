@@ -31,7 +31,6 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/storage"
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
-	"github.com/multiverse-dev/saiya/pkg/evm"
 	"github.com/multiverse-dev/saiya/pkg/io"
 	"github.com/multiverse-dev/saiya/pkg/network"
 	"github.com/multiverse-dev/saiya/pkg/rpc"
@@ -86,6 +85,8 @@ const (
 	// treated like subscriber, so technically it's a limit on websocket
 	// connections.
 	maxSubscribers = 64
+
+	TestGas uint64 = 2000000000
 )
 
 var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *response.Error){
@@ -128,7 +129,7 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"eth_getLogs":                             (*Server).eth_getLogs,
 	// -- end eth api
 	"getversion":           (*Server).getVersion,
-	"calculatenetworkfee":  (*Server).calculateNetworkFee,
+	"calculategas":         (*Server).calculateGas,
 	"findstates":           (*Server).findStates,
 	"getbestblockhash":     (*Server).getBestBlockHash,
 	"getblock":             (*Server).getBlock,
@@ -136,7 +137,7 @@ var rpcHandlers = map[string]func(*Server, request.Params) (interface{}, *respon
 	"getblockhash":         (*Server).getBlockHash,
 	"getblockheader":       (*Server).getBlockHeader,
 	"getblockheadercount":  (*Server).getBlockHeaderCount,
-	"getblocksysfee":       (*Server).getBlockSysFee,
+	"getblocksysfee":       (*Server).getBlockGas,
 	"getcommittee":         (*Server).getCommittee,
 	"getcommitteeaddress":  (*Server).getCommitteeAddress,
 	"getconnectioncount":   (*Server).getConnectionCount,
@@ -708,19 +709,19 @@ func (s *Server) eth_sign(params request.Params) (interface{}, *response.Error) 
 }
 
 func (s *Server) eth_signTransaction(params request.Params) (interface{}, *response.Error) {
-	param := params.Value(0)
-	if param == nil {
+	param, err := params.Value(0).GetString()
+	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
-	data := []byte(param.RawMessage)
+	data := []byte(param)
 	txObj := result.TransactionObject{}
-	err := json.Unmarshal(data, &txObj)
+	err = json.Unmarshal(data, &txObj)
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
 	acc := s.getWalletAccount(txObj.From)
 	if acc == nil {
-		return nil, response.NewInternalServerError("Could not found accout to sign tx", errors.New("account not found"))
+		return nil, response.NewInternalServerError("Could not found account to sign tx", errors.New("account not found"))
 	}
 	inner := &types.LegacyTx{
 		Nonce: s.chain.GetNonce(txObj.From) + 1,
@@ -742,14 +743,14 @@ func (s *Server) eth_signTransaction(params request.Params) (interface{}, *respo
 	}
 	var left uint64
 	if inner.To == nil {
-		_, _, left, err = ic.VM.Create(ic, inner.Data, evm.TestGas, inner.Value)
+		_, _, left, err = ic.VM.Create(ic, inner.Data, TestGas, inner.Value)
 	} else {
-		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
 	}
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	inner.Gas = evm.TestGas - left
+	inner.Gas = TestGas - left
 	err = acc.SignTx(s.chainId, tx)
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not sign tx: %s", err), err)
@@ -797,14 +798,14 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 	}
 	var left uint64
 	if inner.To == nil {
-		_, _, left, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+		_, _, left, err = ic.VM.Create(ic, tx.Data(), TestGas, tx.Value())
 	} else {
-		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
 	}
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	inner.Gas = evm.TestGas - left
+	inner.Gas = TestGas - left
 	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
 	inner.Gas += netfee
 	if err != nil {
@@ -827,7 +828,7 @@ func (s *Server) eth_sendRawTransaction(params request.Params) (interface{}, *re
 	}
 	bw := io.NewBufBinWriter()
 	bw.WriteB(transaction.EthLegacyTxType)
-	bw.WriteVarBytes(rawTx)
+	bw.Write(rawTx)
 	tx, err := transaction.NewTransactionFromBytes(bw.Bytes())
 	if err != nil {
 		return nil, response.NewInvalidParamsError(fmt.Sprintf("can't decode transaction: %s", err), err)
@@ -868,9 +869,9 @@ func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) 
 	}
 	var ret []byte
 	if inner.To == nil {
-		ret, _, _, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+		ret, _, _, err = ic.VM.Create(ic, tx.Data(), TestGas, tx.Value())
 	} else {
-		ret, _, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+		ret, _, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
 	}
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
@@ -886,15 +887,34 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 	if err != nil {
 		return nil, response.NewInvalidParamsError(fmt.Sprintf("Could not unmarshal tx object: %s", err), err)
 	}
-	inner := &types.LegacyTx{
-		Nonce:    s.chain.GetNonce(txObj.From) + 1,
-		GasPrice: s.chain.GetGasPrice(),
-		To:       txObj.To,
-		Value:    txObj.Value,
-		Data:     txObj.Data,
+	var tx *transaction.Transaction
+	if txObj.Witness == nil {
+		inner := &types.LegacyTx{
+			Nonce:    s.chain.GetNonce(txObj.From) + 1,
+			GasPrice: s.chain.GetGasPrice(),
+			Gas:      txObj.Gas,
+			To:       txObj.To,
+			Value:    txObj.Value,
+			Data:     txObj.Data,
+		}
+		tx = transaction.NewTx(inner)
+		tx.EthFrom = txObj.From
+	} else {
+		inner := &transaction.SaiyaTx{
+			Nonce:    s.chain.GetNonce(txObj.From) + 1,
+			From:     txObj.From,
+			GasPrice: s.chain.GetGasPrice(),
+			Gas:      txObj.Gas,
+			To:       txObj.To,
+			Value:    txObj.Value,
+			Data:     txObj.Data,
+			Witness:  *txObj.Witness,
+		}
+		if len(inner.Witness.VerificationScript) == 0 {
+			return nil, response.NewInvalidParamsError("missing verification script", nil)
+		}
+		tx = transaction.NewTx(inner)
 	}
-	tx := transaction.NewTx(inner)
-	tx.EthFrom = txObj.From
 	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
@@ -907,22 +927,22 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 		}
 	}
 	var left uint64
-	if inner.To == nil {
-		_, _, left, err = ic.VM.Create(ic, tx.Data(), evm.TestGas, tx.Value())
+	if tx.To() == nil {
+		_, _, left, err = ic.VM.Create(ic, tx.Data(), TestGas, tx.Value())
 	} else {
-		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), evm.TestGas, tx.Value())
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
 	}
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	inner.Gas = evm.TestGas - left
+	gas := TestGas - left
 	feePerByte := s.chain.GetFeePerByte()
 	netfee := transaction.CalculateNetworkFee(tx, feePerByte)
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not calculate network fee: %s", err), err)
 	}
-	inner.Gas += netfee + params.SstoreSentryGasEIP2200
-	return hexutil.EncodeUint64(inner.Gas), nil
+	gas += netfee + params.SstoreSentryGasEIP2200
+	return hexutil.EncodeUint64(gas), nil
 }
 
 func (s *Server) eth_getBlockByHash(params request.Params) (interface{}, *response.Error) {
@@ -1223,14 +1243,13 @@ func (s *Server) getVersion(_ request.Params) (interface{}, *response.Error) {
 		Nonce:     s.coreServer.ID(),
 		UserAgent: s.coreServer.UserAgent,
 		Protocol: result.Protocol{
-			ChainID:                     cfg.ChainID,
-			MillisecondsPerBlock:        cfg.SecondsPerBlock * 1000,
-			MaxTraceableBlocks:          cfg.MaxTraceableBlocks,
-			MaxValidUntilBlockIncrement: cfg.MaxValidUntilBlockIncrement,
-			MaxTransactionsPerBlock:     cfg.MaxTransactionsPerBlock,
-			MemoryPoolMaxTransactions:   cfg.MemPoolSize,
-			ValidatorsCount:             byte(len(validators)),
-			InitialGasDistribution:      cfg.InitialSAISupply,
+			ChainID:                   cfg.ChainID,
+			MillisecondsPerBlock:      cfg.SecondsPerBlock * 1000,
+			MaxTraceableBlocks:        cfg.MaxTraceableBlocks,
+			MaxTransactionsPerBlock:   cfg.MaxTransactionsPerBlock,
+			MemoryPoolMaxTransactions: cfg.MemPoolSize,
+			ValidatorsCount:           byte(len(validators)),
+			InitialGasDistribution:    cfg.InitialSAISupply,
 		},
 	}, nil
 }
@@ -1273,7 +1292,7 @@ func (s *Server) validateAddress(reqParams request.Params) (interface{}, *respon
 }
 
 // calculateNetworkFee calculates network fee for the transaction.
-func (s *Server) calculateNetworkFee(reqParams request.Params) (interface{}, *response.Error) {
+func (s *Server) calculateGas(reqParams request.Params) (interface{}, *response.Error) {
 	if len(reqParams) < 1 {
 		return 0, response.ErrInvalidParams
 	}
@@ -1281,15 +1300,45 @@ func (s *Server) calculateNetworkFee(reqParams request.Params) (interface{}, *re
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	tx, err := transaction.NewTransactionFromBytes(byteTx)
+	neoTx, err := transaction.NewSaiyaTxFromBytes(byteTx)
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
+	if len(neoTx.Witness.VerificationScript) == 0 {
+		return nil, response.NewInvalidParamsError("missing verification script", nil)
+	}
+	tx := transaction.NewTx(neoTx)
+	feePerByte := s.chain.GetFeePerByte()
+	netfee := transaction.CalculateNetworkFee(tx, feePerByte)
+	if err != nil {
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not calculate network fee: %s", err), err)
+	}
+	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
+	if err != nil {
+		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
+	}
+	fakeBlock := *block
+	ic, err := s.chain.GetTestVM(tx, &fakeBlock)
+	if err != nil {
+		if err != nil {
+			return nil, response.NewInternalServerError(fmt.Sprintf("Could not create execute context: %s", err), err)
+		}
+	}
+	var left uint64
+	if neoTx.To == nil {
+		_, _, left, err = ic.VM.Create(ic, tx.Data(), TestGas, tx.Value())
+	} else {
+		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
+	}
+	if err != nil {
+		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
+	}
+	neoTx.Gas = TestGas - left
+	neoTx.Gas += netfee + params.SstoreSentryGasEIP2200
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("failed to compute tx size: %w", err))
 	}
-	return result.NetworkFee{Value: netfee}, nil
+	return result.NetworkFee{Value: neoTx.Gas}, nil
 }
 
 // getContractScriptHashFromParam returns the contract script hash by hex contract hash, address, id or native contract name.
@@ -1597,20 +1646,17 @@ func (s *Server) getrawtransaction(reqParams request.Params) (interface{}, *resp
 		_header := s.chain.GetHeaderHash(int(height))
 		header, err := s.chain.GetHeader(_header)
 		if err != nil {
-			return nil, response.NewRPCError("Failed to get header for the transaction", err.Error(), err)
+			return nil, response.NewRPCError("Failed to get block header for the transaction", err.Error(), err)
 		}
 		aer, err := s.chain.GetReceipt(txHash)
 		if err != nil {
-			return nil, response.NewRPCError("Failed to get application log for the transaction", err.Error(), err)
-		}
-		if aer == nil {
-			return nil, response.NewRPCError("Application log for the transaction is empty", "", nil)
+			return nil, response.NewRPCError("Failed to get receipt for the transaction", err.Error(), err)
 		}
 		return result.NewTransactionOutputRaw(tx, header, aer), nil
 	}
 	b, err := tx.Bytes()
 	if err != nil {
-		return nil, response.NewInternalServerError("failed encode tx", err)
+		return nil, response.NewInternalServerError(fmt.Sprintf("failed encode tx: %s", err), err)
 	}
 	return b, nil
 }
@@ -1652,7 +1698,7 @@ func (s *Server) getNativeContracts(_ request.Params) (interface{}, *response.Er
 }
 
 // getBlockSysFee returns the system fees of the block, based on the specified index.
-func (s *Server) getBlockSysFee(reqParams request.Params) (interface{}, *response.Error) {
+func (s *Server) getBlockGas(reqParams request.Params) (interface{}, *response.Error) {
 	num, err := s.blockHeightFromParam(reqParams.Value(0))
 	if err != nil {
 		return 0, response.NewRPCError("Invalid height", "", nil)
@@ -1664,12 +1710,12 @@ func (s *Server) getBlockSysFee(reqParams request.Params) (interface{}, *respons
 		return 0, response.NewRPCError(errBlock.Error(), "", nil)
 	}
 
-	var blockSysFee uint64
+	var blockGas uint64
 	for _, tx := range block.Transactions {
-		blockSysFee += tx.Gas()
+		blockGas += tx.Gas()
 	}
 
-	return blockSysFee, nil
+	return blockGas, nil
 }
 
 // getBlockHeader returns the corresponding block header information according to the specified script hash.
@@ -1759,11 +1805,10 @@ func (s *Server) sendrawtransaction(reqParams request.Params) (interface{}, *res
 	}
 	byteTx, err := reqParams[0].GetBytesHex()
 	if err != nil {
-		return nil, response.NewInvalidParamsError("not hex", err)
+		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
 	saiyaTx, err := transaction.NewSaiyaTxFromBytes(byteTx)
 	if err != nil {
-		fmt.Println(err)
 		return nil, response.NewInvalidParamsError("can't decode transaction", err)
 	}
 	tx := transaction.NewTx(saiyaTx)
@@ -1791,7 +1836,7 @@ func (s *Server) subscribe(reqParams request.Params, sub *subscriber) (interface
 			flt := new(request.BlockFilter)
 			err = jd.Decode(flt)
 			filter = *flt
-		case response.TransactionEventID, response.NotaryRequestEventID:
+		case response.TransactionEventID:
 			flt := new(request.TxFilter)
 			err = jd.Decode(flt)
 			filter = *flt

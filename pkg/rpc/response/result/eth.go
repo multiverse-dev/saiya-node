@@ -2,10 +2,12 @@ package result
 
 import (
 	"encoding/json"
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 )
 
 type Syncing struct {
@@ -15,21 +17,23 @@ type Syncing struct {
 }
 
 type TransactionObject struct {
-	Data     []byte          `json:"data"`     //optional
-	From     common.Address  `json:"from"`     //optional
-	Gas      uint64          `json:"gas"`      //optional
-	GasPrice *big.Int        `json:"gasPrice"` //optional
-	To       *common.Address `json:"to"`
-	Value    *big.Int        `json:"value"` //optional
+	Data     []byte               `json:"data"`     //optional
+	From     common.Address       `json:"from"`     //optional
+	Gas      uint64               `json:"gas"`      //optional
+	GasPrice *big.Int             `json:"gasPrice"` //optional
+	To       *common.Address      `json:"to"`
+	Value    *big.Int             `json:"value"`   //optional
+	Witness  *transaction.Witness `json:"witness"` //optional
 }
 
 type txObj struct {
-	Data     string `json:"data"`
-	From     string `json:"from"`
-	Gas      string `json:"gas"`
-	GasPrice string `json:"gasPrice"`
-	To       string `json:"to,omitempty"`
-	Value    string `json:"value"`
+	Data     string               `json:"data"`
+	From     string               `json:"from"`
+	Gas      string               `json:"gas"`
+	GasPrice string               `json:"gasPrice"`
+	To       string               `json:"to,omitempty"`
+	Value    string               `json:"value"`
+	Witness  *transaction.Witness `json:"witness"`
 }
 
 func (t *TransactionObject) UnmarshalJSON(text []byte) error {
@@ -81,17 +85,31 @@ func (t *TransactionObject) UnmarshalJSON(text []byte) error {
 		}
 		t.Data = data
 	}
+	if tx.Witness == nil {
+		t.Witness = nil
+	} else {
+		t.Witness = tx.Witness
+	}
 	return nil
 }
 
 func (t TransactionObject) MarshalJSON() ([]byte, error) {
+	if t.GasPrice == nil {
+		return nil, errors.New("gasPrice can't be nil")
+	}
+	if t.Value == nil {
+		return nil, errors.New("value can't be nil")
+	}
 	tx := txObj{
 		From:     t.From.String(),
-		To:       t.To.String(),
 		Gas:      hexutil.EncodeUint64(t.Gas),
 		GasPrice: hexutil.EncodeBig(t.GasPrice),
 		Data:     hexutil.Encode(t.Data),
 		Value:    hexutil.EncodeBig(t.Value),
+		Witness:  t.Witness,
+	}
+	if t.To != nil {
+		tx.To = t.To.String()
 	}
 	return json.Marshal(tx)
 }

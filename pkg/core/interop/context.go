@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/multiverse-dev/saiya/pkg/config"
 	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"github.com/multiverse-dev/saiya/pkg/core/dao"
@@ -11,8 +12,7 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/statedb"
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
-	"github.com/multiverse-dev/saiya/pkg/evm"
-	"github.com/multiverse-dev/saiya/pkg/evm/vm"
+	"github.com/multiverse-dev/saiya/pkg/vm"
 )
 
 type NativeContract interface {
@@ -28,26 +28,31 @@ type Chain interface {
 
 // Context represents context in which interops are executed.
 type Context struct {
-	Chain Chain
-	Block *block.Block
-	Tx    *transaction.Transaction
-	VM    *vm.EVM
-	bctx  vm.BlockContext
-	sdb   *statedb.StateDB
+	Chain  Chain
+	Block  *block.Block
+	Tx     *transaction.Transaction
+	VM     *EVM
+	bctx   vm.BlockContext
+	sdb    *statedb.StateDB
+	caller common.Address
 }
 
 func NewContext(block *block.Block, tx *transaction.Transaction, sdb *statedb.StateDB, chain Chain) (*Context, error) {
 	ctx := &Context{
-		Chain: chain,
-		Block: block,
-		Tx:    tx,
-		sdb:   sdb,
+		Chain:  chain,
+		Block:  block,
+		Tx:     tx,
+		sdb:    sdb,
+		caller: tx.From(),
 	}
-	ctx.bctx = NewEVMBlockContext(block, chain, chain.GetConfig())
-	txContext := NewEVMTxContext(tx.From(), big.NewInt(1))
-	ctx.VM = evm.NewEVM(ctx.bctx,
+	ctx.bctx = newEVMBlockContext(block, chain, chain.GetConfig())
+	txContext := vm.TxContext{
+		Origin:   tx.From(),
+		GasPrice: tx.GasPrice(),
+	}
+	ctx.VM = NewEVM(ctx.bctx,
 		txContext, sdb, chain.GetConfig(),
-		map[common.Address]vm.PrecompiledContract{
+		map[common.Address]vm.NativeContract{
 			native.DesignationAddress: nativeWrapper{
 				nativeContract: chain.Contracts().Designate,
 				ic:             ctx,
@@ -60,16 +65,55 @@ func NewContext(block *block.Block, tx *transaction.Transaction, sdb *statedb.St
 				nativeContract: chain.Contracts().SAI,
 				ic:             ctx,
 			},
+			native.ManagementAddress: nativeWrapper{
+				nativeContract: chain.Contracts().Management,
+				ic:             ctx,
+			},
 		})
 	return ctx, nil
 }
 
-func (c Context) Sender() common.Address {
-	return c.Tx.From()
+func newEVMBlockContext(block *block.Block,
+	bc Chain,
+	protocolSettings config.ProtocolConfiguration) (bctx vm.BlockContext) {
+	var coinbase common.Address
+	if block.Index > 0 {
+		validators, err := bc.GetCurrentValidators()
+		if err != nil {
+			panic(err)
+		}
+		if len(validators) == 0 {
+			panic("no validators")
+		}
+		coinbase = validators[block.PrimaryIndex].Address()
+	}
+	random := common.BigToHash(big.NewInt(int64(block.Nonce)))
+	bctx = vm.BlockContext{
+		CanTransfer: func(sdb vm.StateDB, from common.Address, amount *big.Int) bool {
+			return sdb.GetBalance(from).Cmp(amount) > 0
+		},
+		Transfer: func(sdb vm.StateDB, from common.Address, to common.Address, amount *big.Int) {
+			fromAmount := big.NewInt(0).Neg(amount)
+			sdb.AddBalance(from, fromAmount)
+			sdb.AddBalance(to, amount)
+		},
+		Coinbase:    coinbase,
+		GasLimit:    uint64(protocolSettings.MaxBlockGas),
+		BlockNumber: big.NewInt(int64(block.Index)),
+		Time:        big.NewInt(int64(block.Timestamp)),
+		Difficulty:  big.NewInt(0),
+		BaseFee:     big.NewInt(0),
+		Random:      &random,
+	}
+	return
 }
 
-func (c Context) Natives() *native.Contracts {
-	return c.Chain.Contracts()
+func (c Context) Log(log *types.Log) {
+	c.sdb.AddLog(log)
+}
+
+func (c Context) Sender() common.Address {
+	return c.caller
 }
 
 func (c Context) Dao() *dao.Simple {

@@ -12,7 +12,6 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/state"
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
-	"github.com/multiverse-dev/saiya/pkg/encoding/fixedn"
 	"github.com/multiverse-dev/saiya/pkg/io"
 	"github.com/multiverse-dev/saiya/pkg/rpc/request"
 	"github.com/multiverse-dev/saiya/pkg/rpc/response/result"
@@ -27,6 +26,21 @@ func (c *Client) IsBlocked(address common.Address) (bool, error) {
 		return resp, err
 	}
 	return resp, nil
+}
+
+func (c *Client) CalculateGas(tx *transaction.SaiyaTx) (uint64, error) {
+	b, err := tx.Bytes()
+	if err != nil {
+		return 0, err
+	}
+	var (
+		params = request.NewRawParams(hexutil.Bytes(b))
+		resp   = new(result.NetworkFee)
+	)
+	if err := c.performRequest("calculategas", params, resp); err != nil {
+		return 0, err
+	}
+	return resp.Value, nil
 }
 
 // GetBestBlockHash returns the hash of the tallest block in the main chain.
@@ -157,12 +171,12 @@ func (c *Client) GetBlockHeaderVerbose(hash common.Hash) (*result.Header, error)
 }
 
 // GetBlockSysFee returns the system fees of the block, based on the specified index.
-func (c *Client) GetBlockSysFee(index uint32) (fixedn.Fixed8, error) {
+func (c *Client) GetBlockGas(index uint32) (uint64, error) {
 	var (
 		params = request.NewRawParams(index)
-		resp   fixedn.Fixed8
+		resp   uint64
 	)
-	if err := c.performRequest("getblocksysfee", params, &resp); err != nil {
+	if err := c.performRequest("getblockgas", params, &resp); err != nil {
 		return resp, err
 	}
 	return resp, nil
@@ -187,6 +201,28 @@ func (c *Client) GetCommittee() (keys.PublicKeys, error) {
 	)
 	if err := c.performRequest("getcommittee", params, resp); err != nil {
 		return nil, err
+	}
+	return *resp, nil
+}
+
+func (c *Client) GetValidators() (keys.PublicKeys, error) {
+	var (
+		params = request.NewRawParams()
+		resp   = new(keys.PublicKeys)
+	)
+	if err := c.performRequest("getvalidators", params, resp); err != nil {
+		return nil, err
+	}
+	return *resp, nil
+}
+
+func (c *Client) GetCommitteeAddress() (common.Address, error) {
+	var (
+		params = request.NewRawParams()
+		resp   = new(common.Address)
+	)
+	if err := c.performRequest("getcommitteeaddress", params, resp); err != nil {
+		return common.Address{}, err
 	}
 	return *resp, nil
 }

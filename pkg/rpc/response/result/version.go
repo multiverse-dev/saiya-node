@@ -20,7 +20,6 @@ type (
 		ChainID                     uint64 `json:"network"`
 		MillisecondsPerBlock        int    `json:"msperblock"`
 		MaxTraceableBlocks          uint32 `json:"maxtraceableblocks"`
-		MaxValidUntilBlockIncrement uint32 `json:"maxvaliduntilblockincrement"`
 		MaxTransactionsPerBlock     uint16 `json:"maxtransactionsperblock"`
 		MemoryPoolMaxTransactions   int    `json:"memorypoolmaxtransactions"`
 		ValidatorsCount             byte   `json:"validatorscount"`

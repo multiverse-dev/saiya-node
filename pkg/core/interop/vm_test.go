@@ -1,4 +1,4 @@
-package evm
+package interop
 
 import (
 	"math/big"
@@ -11,7 +11,7 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
 	"github.com/multiverse-dev/saiya/pkg/core/statedb"
 	"github.com/multiverse-dev/saiya/pkg/core/storage"
-	"github.com/multiverse-dev/saiya/pkg/evm/vm"
+	"github.com/multiverse-dev/saiya/pkg/vm"
 	"github.com/stretchr/testify/assert"
 )
 

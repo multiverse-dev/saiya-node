@@ -10,6 +10,8 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativeids"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
 	"github.com/multiverse-dev/saiya/pkg/core/state"
+	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
+	"github.com/multiverse-dev/saiya/pkg/dbft/block"
 	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
@@ -25,26 +27,34 @@ var (
 
 type SAI struct {
 	state.NativeContract
+	cs            *Contracts
 	symbol        string
 	decimals      int64
 	initialSupply uint64
 }
 
-func NewSAI(init uint64) *SAI {
+func NewSAI(cs *Contracts, init uint64) *SAI {
 	g := &SAI{
 		NativeContract: state.NativeContract{
 			Name: nativenames.SAI,
 			Contract: state.Contract{
-				Address: SAIAddress,
-				Code:    []byte{},
+				Address:  SAIAddress,
+				CodeHash: hash.Keccak256(SAIAddress[:]),
+				Code:     SAIAddress[:],
 			},
 		},
+		cs:            cs,
 		initialSupply: init,
 	}
 
 	g.symbol = "SAI"
 	g.decimals = SAIDecimal
-
+	gasAbi, contractCalls, err := constructAbi(g)
+	if err != nil {
+		panic(err)
+	}
+	g.Abi = *gasAbi
+	g.ContractCalls = contractCalls
 	return g
 }
 
@@ -52,17 +62,35 @@ func makeAccountKey(h common.Address) []byte {
 	return makeAddressKey(prefixAccount, h)
 }
 
-func (g *SAI) initialize(ic InteropContext) error {
+func (g *SAI) ContractCall_initialize(ic InteropContext) error {
 	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
 		return ErrInitialize
 	}
-	addr, err := ic.Natives().Designate.GetCommitteeAddress(ic.Dao(), 0)
+	validators, err := g.cs.Designate.GetValidators(ic.Dao(), 0)
 	if err != nil {
 		return err
 	}
 	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(SAIDecimal), nil)
+	var addr common.Address
+	if validators.Len() == 1 {
+		addr = validators[0].Address()
+	} else {
+		script, err := validators.CreateDefaultMultiSigRedeemScript()
+		if err != nil {
+			return err
+		}
+		addr = hash.Hash160(script)
+	}
 	total := big.NewInt(1).Mul(big.NewInt(int64(g.initialSupply)), wei)
-	return g.addTokens(ic.Dao(), addr, total)
+	err = g.addTokens(ic.Dao(), addr, total)
+	if err == nil {
+		log(ic, g.Address, total.Bytes(), g.Abi.Events["initialize"].ID)
+	}
+	return err
+}
+
+func (g *SAI) OnPersist(d *dao.Simple, block *block.Block) {
+
 }
 
 func (g *SAI) increaseBalance(gs *GasState, amount *big.Int) error {
@@ -73,20 +101,21 @@ func (g *SAI) increaseBalance(gs *GasState, amount *big.Int) error {
 	return nil
 }
 
-func (g *SAI) getTotalSupply(s *dao.Simple) *big.Int {
-	si := s.GetStorageItem(g.Address, totalSupplyKey)
+func (g *SAI) getTotalSupply(d *dao.Simple) *big.Int {
+	si := d.GetStorageItem(g.Address, totalSupplyKey)
+
 	if si == nil {
 		return nil
 	}
 	return big.NewInt(0).SetBytes(si)
 }
 
-func (g *SAI) saveTotalSupply(s *dao.Simple, supply *big.Int) {
-	s.PutStorageItem(g.Address, totalSupplyKey, supply.Bytes())
+func (g *SAI) saveTotalSupply(d *dao.Simple, supply *big.Int) {
+	d.PutStorageItem(g.Address, totalSupplyKey, supply.Bytes())
 }
 
-func (g *SAI) getGasState(s *dao.Simple, key []byte) (*GasState, error) {
-	si := s.GetStorageItem(g.Address, key)
+func (g *SAI) getGasState(d *dao.Simple, key []byte) (*GasState, error) {
+	si := d.GetStorageItem(g.Address, key)
 	if si == nil {
 		return nil, nil
 	}
@@ -98,21 +127,21 @@ func (g *SAI) getGasState(s *dao.Simple, key []byte) (*GasState, error) {
 	return gs, nil
 }
 
-func (g *SAI) putGasState(s *dao.Simple, key []byte, gs *GasState) error {
+func (g *SAI) putGasState(d *dao.Simple, key []byte, gs *GasState) error {
 	data, err := io.ToByteArray(gs)
 	if err != nil {
 		return err
 	}
-	s.PutStorageItem(g.Address, key, data)
+	d.PutStorageItem(g.Address, key, data)
 	return nil
 }
 
-func (g *SAI) addTokens(s *dao.Simple, h common.Address, amount *big.Int) error {
+func (g *SAI) addTokens(d *dao.Simple, h common.Address, amount *big.Int) error {
 	if amount.Sign() == 0 {
 		return nil
 	}
 	key := makeAccountKey(h)
-	gs, err := g.getGasState(s, key)
+	gs, err := g.getGasState(d, key)
 	if err != nil {
 		return err
 	}
@@ -126,30 +155,30 @@ func (g *SAI) addTokens(s *dao.Simple, h common.Address, amount *big.Int) error 
 		return err
 	}
 	if gs != nil && ngs.Balance.Sign() == 0 {
-		s.DeleteStorageItem(g.Address, key)
+		d.DeleteStorageItem(g.Address, key)
 	} else {
-		err = g.putGasState(s, key, ngs)
+		err = g.putGasState(d, key, ngs)
 		if err != nil {
 			return err
 		}
 	}
-	supply := g.getTotalSupply(s)
+	supply := g.getTotalSupply(d)
 	if supply == nil {
 		supply = big.NewInt(0)
 	}
 	supply.Add(supply, amount)
-	g.saveTotalSupply(s, supply)
+	g.saveTotalSupply(d, supply)
 	return nil
 }
 
-func (g *SAI) AddBalance(s *dao.Simple, h common.Address, amount *big.Int) {
-	g.addTokens(s, h, amount)
+func (g *SAI) AddBalance(d *dao.Simple, h common.Address, amount *big.Int) {
+	g.addTokens(d, h, amount)
 }
 
-func (g *SAI) SubBalance(s *dao.Simple, h common.Address, amount *big.Int) {
+func (g *SAI) SubBalance(d *dao.Simple, h common.Address, amount *big.Int) {
 	neg := big.NewInt(0)
 	neg.Neg(amount)
-	g.addTokens(s, h, neg)
+	g.addTokens(d, h, neg)
 }
 
 func (g *SAI) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
@@ -175,11 +204,15 @@ func (g *SAI) GetBalance(d *dao.Simple, h common.Address) *big.Int {
 }
 
 func (g *SAI) RequiredGas(ic InteropContext, input []byte) uint64 {
-	if len(input) < 1 {
+	if len(input) < 4 {
 		return 0
 	}
-	switch input[0] {
-	case 0x00:
+	method, err := g.Abi.MethodById(input[:4])
+	if err != nil {
+		return 0
+	}
+	switch method.Name {
+	case "initialize":
 		return 0
 	default:
 		return 0
@@ -187,15 +220,7 @@ func (g *SAI) RequiredGas(ic InteropContext, input []byte) uint64 {
 }
 
 func (g *SAI) Run(ic InteropContext, input []byte) ([]byte, error) {
-	if len(input) < 1 {
-		return nil, ErrEmptyInput
-	}
-	switch input[0] {
-	case 0x00:
-		return nil, g.initialize(ic)
-	default:
-		return nil, ErrInvalidMethodID
-	}
+	return contractCall(g, &g.NativeContract, ic, input)
 }
 
 type GasState struct {

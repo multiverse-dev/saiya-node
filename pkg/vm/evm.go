@@ -42,7 +42,18 @@ type (
 )
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
-	p, ok := evm.precompiles[addr]
+	var precompiles map[common.Address]PrecompiledContract
+	switch {
+	case evm.chainRules.IsBerlin:
+		precompiles = PrecompiledContractsBerlin
+	case evm.chainRules.IsIstanbul:
+		precompiles = PrecompiledContractsIstanbul
+	case evm.chainRules.IsByzantium:
+		precompiles = PrecompiledContractsByzantium
+	default:
+		precompiles = PrecompiledContractsHomestead
+	}
+	p, ok := precompiles[addr]
 	return p, ok
 }
 
@@ -111,12 +122,12 @@ type EVM struct {
 	// applied in opCall*.
 	callGasTemp uint64
 
-	precompiles map[common.Address]PrecompiledContract
+	natives map[common.Address]NativeContract
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
 // only ever be used *once*.
-func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig *params.ChainConfig, config Config, extraPrecompiles map[common.Address]PrecompiledContract) *EVM {
+func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig *params.ChainConfig, config Config, natives map[common.Address]NativeContract) *EVM {
 	evm := &EVM{
 		Context:     blockCtx,
 		TxContext:   txCtx,
@@ -124,16 +135,15 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 		Config:      config,
 		chainConfig: chainConfig,
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil),
-		precompiles: make(map[common.Address]PrecompiledContract, len(PrecompiledContractsBerlin)+len(extraPrecompiles)),
-	}
-	for addr, precompiled := range PrecompiledContractsBerlin {
-		evm.precompiles[addr] = precompiled
-	}
-	for addr, precompiled := range extraPrecompiles {
-		evm.precompiles[addr] = precompiled
+		natives:     natives,
 	}
 	evm.interpreter = NewEVMInterpreter(evm, config)
 	return evm
+}
+
+func (evm *EVM) native(address common.Address) (NativeContract, bool) {
+	native, ok := evm.natives[address]
+	return native, ok
 }
 
 // Reset resets the EVM with a new transaction context.Reset
@@ -174,8 +184,9 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 	snapshot := evm.StateDB.Snapshot()
 	p, isPrecompile := evm.precompile(addr)
+	n, isNative := evm.native(addr)
 	if !evm.StateDB.Exist(addr) {
-		if !isPrecompile && evm.chainRules.IsEIP158 && value.Sign() == 0 {
+		if !isNative && !isPrecompile && evm.chainRules.IsEIP158 && value.Sign() == 0 {
 			// Calling a non existing account, don't do anything, but ping the tracer
 			if evm.Config.Debug {
 				if evm.depth == 0 {
@@ -208,6 +219,8 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 	if isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if isNative {
+		ret, gas, err = RunNativeContract(n, caller.Address(), input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -271,6 +284,8 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if n, isNative := evm.native(addr); isNative {
+		ret, gas, err = RunNativeContract(n, caller.Address(), input, gas)
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and set the code that is to be used by the EVM.
@@ -312,6 +327,8 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if n, isNative := evm.native(addr); isNative {
+		ret, gas, err = RunNativeContract(n, caller.Address(), input, gas)
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and make initialise the delegate values
@@ -361,6 +378,8 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas)
+	} else if n, isNative := evm.native(addr); isNative {
+		ret, gas, err = RunNativeContract(n, caller.Address(), input, gas)
 	} else {
 		// At this point, we use a copy of address. If we don't, the go compiler will
 		// leak the 'contract' to the outer scope, and make allocation for 'contract'

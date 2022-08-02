@@ -33,6 +33,13 @@ func TestEthTxDecode(t *testing.T) {
 	d, err = json.Marshal(tx)
 	assert.NoError(t, err)
 	t.Log(string(d))
+	txx := &types.LegacyTx{}
+	bss := append(d, 1)
+	reader := io.NewBinReaderFromBuf(bss)
+	err = rlp.Decode(reader, txx)
+	assert.NoError(t, err)
+	b := reader.ReadB()
+	assert.Equal(t, byte(1), b)
 }
 
 func TestHexutil(t *testing.T) {

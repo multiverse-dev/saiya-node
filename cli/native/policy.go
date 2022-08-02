@@ -1,7 +1,6 @@
 package native
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 	"github.com/multiverse-dev/saiya/cli/options"
 	"github.com/multiverse-dev/saiya/cli/wallet"
 	"github.com/multiverse-dev/saiya/pkg/core/native"
+	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
 	"github.com/urfave/cli"
 )
 
@@ -31,7 +31,7 @@ func newPolicyCommands() []cli.Command {
 			Flags:     flags,
 		},
 		{
-			Name:      "is-blocked",
+			Name:      "isblocked",
 			Usage:     "isBlocked account",
 			ArgsUsage: "<address>",
 			Action:    isBlocked,
@@ -82,58 +82,56 @@ func isBlocked(ctx *cli.Context) error {
 }
 
 func blockAccount(ctx *cli.Context) error {
-	input, err := parseAddressInput(ctx)
+	address, err := parseAddressInput(ctx)
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, native.PrefixBlockedAcount, input)
+	return callPolicy(ctx, "blockAccount", address)
 }
 
 func unblockAccount(ctx *cli.Context) error {
-	input, err := parseAddressInput(ctx)
+	address, err := parseAddressInput(ctx)
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, native.PrefixBlockedAcount+1, input)
+	return callPolicy(ctx, "unblockAccount", address)
 }
 
 func setFeePerByte(ctx *cli.Context) error {
-	input, err := parseUint64Input(ctx)
+	value, err := parseUint64Input(ctx)
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, native.PrefixFeePerByte, input)
+	return callPolicy(ctx, "setFeePerByte", value)
 }
 
 func setGasPrice(ctx *cli.Context) error {
-	input, err := parseBigInput(ctx)
+	value, err := parseBigInput(ctx)
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, native.PrefixGasPrice, input)
+	return callPolicy(ctx, "setGasPrice", value)
 }
 
-func parseAddressInput(ctx *cli.Context) ([]byte, error) {
+func parseAddressInput(ctx *cli.Context) (common.Address, error) {
 	if len(ctx.Args()) < 1 {
-		return nil, cli.NewExitError(fmt.Errorf("please input address"), 1)
+		return common.Address{}, cli.NewExitError(fmt.Errorf("please input address"), 1)
 	}
 	addrHex := ctx.Args().First()
 	address := common.HexToAddress(addrHex)
-	return address.Bytes(), nil
+	return address, nil
 }
 
-func parseUint64Input(ctx *cli.Context) ([]byte, error) {
+func parseUint64Input(ctx *cli.Context) (uint64, error) {
 	if len(ctx.Args()) < 1 {
-		return nil, cli.NewExitError(fmt.Errorf("please input address"), 1)
+		return 0, cli.NewExitError(fmt.Errorf("please input address"), 1)
 	}
 	num := ctx.Args().First()
 	param, err := strconv.ParseUint(num, 10, 64)
 	if err != nil {
-		return nil, cli.NewExitError(fmt.Errorf("invalid number %s", num), 1)
+		return 0, cli.NewExitError(fmt.Errorf("invalid number %s", num), 1)
 	}
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint64(data, param)
-	return data, nil
+	return param, nil
 }
 
 func parseBigInput(ctx *cli.Context) ([]byte, error) {
@@ -148,8 +146,14 @@ func parseBigInput(ctx *cli.Context) ([]byte, error) {
 	return param.Bytes(), nil
 }
 
-func callPolicy(ctx *cli.Context, method byte, input []byte) error {
-	data := []byte{method}
-	data = append(data, input...)
+func callPolicy(ctx *cli.Context, method string, args ...interface{}) error {
+	pabi, err := getNativeContract(ctx, nativenames.Policy)
+	if err != nil {
+		return err
+	}
+	data, err := pabi.Pack(method, args...)
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("can't pack inputs for %s: %w", method, err), 1)
+	}
 	return makeCommitteeTx(ctx, native.PolicyAddress, data)
 }

@@ -205,12 +205,8 @@ func (t *Transaction) EncodeBinary(w *io.BinWriter) {
 	w.WriteB(t.Type)
 	switch t.Type {
 	case EthLegacyTxType:
-		b, err := rlp.EncodeToBytes(t.LegacyTx)
-		if err != nil {
-			w.Err = err
-			return
-		}
-		w.WriteVarBytes(b)
+		err := rlp.Encode(w, t.LegacyTx)
+		w.Err = err
 	case SaiyaTxType:
 		t.SaiyaTx.EncodeBinary(w)
 	default:
@@ -223,8 +219,7 @@ func (t *Transaction) DecodeBinary(r *io.BinReader) {
 	switch t.Type {
 	case EthLegacyTxType:
 		inner := new(types.LegacyTx)
-		b := r.ReadVarBytes()
-		err := rlp.DecodeBytes(b, inner)
+		err := rlp.Decode(r, inner)
 		r.Err = err
 		t.LegacyTx = inner
 	case SaiyaTxType:

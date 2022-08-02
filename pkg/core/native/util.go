@@ -1,6 +1,8 @@
 package native
 
-import "github.com/ethereum/go-ethereum/common"
+import (
+	"github.com/ethereum/go-ethereum/common"
+)
 
 func makeAddressKey(prefix byte, h common.Address) []byte {
 	k := make([]byte, common.AddressLength+1)

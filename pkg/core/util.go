@@ -6,7 +6,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/multiverse-dev/saiya/pkg/config"
 	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"github.com/multiverse-dev/saiya/pkg/core/native"
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
@@ -15,7 +14,7 @@ import (
 )
 
 // createGenesisBlock creates a genesis block based on the given configuration.
-func createGenesisBlock(cfg config.ProtocolConfiguration) (*block.Block, error) {
+func createGenesisBlock() (*block.Block, error) {
 	base := block.Header{
 		Version:   0,
 		PrevHash:  common.Hash{},
@@ -27,29 +26,40 @@ func createGenesisBlock(cfg config.ProtocolConfiguration) (*block.Block, error) 
 			InvocationScript:   []byte{},
 		},
 	}
-	initData := []byte{0x00}
+	h := hash.Keccak256([]byte("initialize()"))
+	initData := h[:4]
+	gas := (transaction.EthLegacyBaseLength + 4) * native.DefaultFeePerByte
+	gasPrice := big.NewInt(int64(native.DefaultGasPrice))
 	b := &block.Block{
 		Header: base,
 		Transactions: []*transaction.Transaction{
 			transaction.NewTx(&types.LegacyTx{
-				To:    &native.DesignationAddress,
-				Data:  initData,
-				Value: big.NewInt(0),
+				GasPrice: gasPrice,
+				Gas:      gas,
+				To:       &native.DesignationAddress,
+				Data:     initData,
+				Value:    big.NewInt(0),
 			}),
 			transaction.NewTx(&types.LegacyTx{
-				To:    &native.PolicyAddress,
-				Data:  initData,
-				Value: big.NewInt(0),
+				GasPrice: gasPrice,
+				Gas:      gas,
+				To:       &native.PolicyAddress,
+				Data:     initData,
+				Value:    big.NewInt(0),
 			}),
 			transaction.NewTx(&types.LegacyTx{
-				To:    &native.SAIAddress,
-				Data:  initData,
-				Value: big.NewInt(0),
+				GasPrice: gasPrice,
+				Gas:      gas,
+				To:       &native.SAIAddress,
+				Data:     initData,
+				Value:    big.NewInt(0),
 			}),
 			transaction.NewTx(&types.LegacyTx{
-				To:    &native.ManagementAddress,
-				Data:  initData,
-				Value: big.NewInt(0),
+				GasPrice: gasPrice,
+				Gas:      gas,
+				To:       &native.ManagementAddress,
+				Data:     initData,
+				Value:    big.NewInt(0),
 			}),
 		},
 	}

@@ -20,8 +20,6 @@ const (
 	NotificationEventID
 	// ExecutionEventID is used for `transaction_executed` events.
 	ExecutionEventID
-	// NotaryRequestEventID is used for `notary_request_event` event.
-	NotaryRequestEventID
 	// MissedEventID notifies user of missed events.
 	MissedEventID EventID = 255
 )
@@ -37,8 +35,6 @@ func (e EventID) String() string {
 		return "notification_from_execution"
 	case ExecutionEventID:
 		return "transaction_executed"
-	case NotaryRequestEventID:
-		return "notary_request_event"
 	case MissedEventID:
 		return "event_missed"
 	default:
@@ -57,8 +53,6 @@ func GetEventIDFromString(s string) (EventID, error) {
 		return NotificationEventID, nil
 	case "transaction_executed":
 		return ExecutionEventID, nil
-	case "notary_request_event":
-		return NotaryRequestEventID, nil
 	case "event_missed":
 		return MissedEventID, nil
 	default:

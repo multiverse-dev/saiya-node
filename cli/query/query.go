@@ -15,33 +15,58 @@ func NewCommands() []cli.Command {
 	queryTxFlags := append([]cli.Flag{
 		cli.BoolFlag{
 			Name:  "verbose, v",
-			Usage: "Output full tx info and execution logs",
+			Usage: "output full tx info and execution logs",
 		},
 	}, options.RPC...)
 	return []cli.Command{{
 		Name:  "query",
-		Usage: "Query data from RPC node",
+		Usage: "query data from RPC node",
 		Subcommands: []cli.Command{
 			{
 				Name:   "committee",
-				Usage:  "Get committee list",
+				Usage:  "get committee list",
 				Action: queryCommittee,
 				Flags:  options.RPC,
 			},
 			{
+				Name:   "validators",
+				Usage:  "get validators list",
+				Action: queryValidator,
+				Flags:  options.RPC,
+			},
+			{
 				Name:   "height",
-				Usage:  "Get node height",
+				Usage:  "get node height",
 				Action: queryHeight,
 				Flags:  options.RPC,
 			},
 			{
 				Name:   "tx",
-				Usage:  "Query transaction status",
+				Usage:  "query transaction status",
 				Action: queryTx,
 				Flags:  queryTxFlags,
 			},
 		},
 	}}
+}
+
+func queryValidator(ctx *cli.Context) error {
+	var err error
+	gctx, cancel := options.GetTimeoutContext(ctx)
+	defer cancel()
+
+	c, err := options.GetRPCClient(gctx, ctx)
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	validators, err := c.GetValidators()
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	for _, k := range validators {
+		fmt.Fprintln(ctx.App.Writer, hex.EncodeToString(k.Bytes()))
+	}
+	return nil
 }
 
 func queryTx(ctx *cli.Context) error {
@@ -68,11 +93,16 @@ func queryTx(ctx *cli.Context) error {
 	if err != nil {
 		return cli.NewExitError(err, 1)
 	}
-	fmt.Fprintln(ctx.App.Writer, string(b))
-	return dumpReceipt(txHash)
-}
-
-func dumpReceipt(txHash common.Hash) error {
+	fmt.Fprintf(ctx.App.Writer, "tx: %s\n", string(b))
+	receipt, err := c.Eth_GetTransactionReceipt(txHash)
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("can't get receipt: %w", err), 1)
+	}
+	b, err = json.Marshal(receipt)
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	fmt.Fprintf(ctx.App.Writer, "receipt: %s\n", string(b))
 	return nil
 }
 

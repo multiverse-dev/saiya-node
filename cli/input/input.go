@@ -6,7 +6,6 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"golang.org/x/term"
 )
 
@@ -59,7 +58,7 @@ func ReadPassword(prompt string) (string, error) {
 }
 
 // ConfirmTx asks for a confirmation to send tx.
-func ConfirmTx(w io.Writer, tx *transaction.Transaction) error {
+func ConfirmTx() error {
 	ln, err := ReadLine("Relay transaction (y|N)> ")
 	if err != nil {
 		return err

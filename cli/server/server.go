@@ -125,6 +125,7 @@ func getConfigFromContext(ctx *cli.Context) (config.Config, error) {
 	configPath := "./config"
 	if argCp := ctx.String("config-path"); argCp != "" {
 		configPath = argCp
+		return config.LoadFile(configPath)
 	}
 	return config.Load(configPath, options.GetNetwork(ctx))
 }

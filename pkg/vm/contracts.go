@@ -34,6 +34,21 @@ import (
 	"golang.org/x/crypto/ripemd160"
 )
 
+type NativeContract interface {
+	RequiredGas(input []byte) uint64                         // RequiredPrice calculates the contract gas use
+	Run(caller common.Address, input []byte) ([]byte, error) // Run runs the precompiled contract
+}
+
+func RunNativeContract(p NativeContract, caller common.Address, input []byte, suppliedGas uint64) (ret []byte, remainingGas uint64, err error) {
+	gasCost := p.RequiredGas(input)
+	if suppliedGas < gasCost {
+		return nil, 0, ErrOutOfGas
+	}
+	suppliedGas -= gasCost
+	output, err := p.Run(caller, input)
+	return output, suppliedGas, err
+}
+
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
 // requires a deterministic gas count based on the input size of the Run method of the
 // contract.

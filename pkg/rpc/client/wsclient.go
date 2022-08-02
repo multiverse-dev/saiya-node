@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -81,8 +83,12 @@ const (
 // operating on.
 func NewWS(ctx context.Context, endpoint string, opts Options) (*WSClient, error) {
 	dialer := websocket.Dialer{HandshakeTimeout: opts.DialTimeout}
-	ws, _, err := dialer.Dial(endpoint, nil)
+	ws, resp, err := dialer.Dial(endpoint, nil)
 	if err != nil {
+		b, e := io.ReadAll(resp.Body)
+		if e == nil {
+			err = fmt.Errorf("%w, response: %s", err, string(b))
+		}
 		return nil, err
 	}
 	wsc := &WSClient{
@@ -96,7 +102,6 @@ func NewWS(ctx context.Context, endpoint string, opts Options) (*WSClient, error
 		requests:      make(chan *request.Raw),
 		subscriptions: make(map[string]bool),
 	}
-
 	err = initClient(ctx, &wsc.Client, endpoint, opts)
 	if err != nil {
 		return nil, err
@@ -316,10 +321,10 @@ func (c *WSClient) SubscribeForNewBlocks(primary *int) (string, error) {
 // SubscribeForNewTransactions adds subscription for new transaction events to
 // this instance of client. It can be filtered by sender and/or signer, nil
 // value is treated as missing filter.
-func (c *WSClient) SubscribeForNewTransactions(sender *common.Address, signer *common.Address) (string, error) {
+func (c *WSClient) SubscribeForNewTransactions(sender *common.Address) (string, error) {
 	params := request.NewRawParams("transaction_added")
-	if sender != nil || signer != nil {
-		params.Values = append(params.Values, request.TxFilter{Sender: sender, Signer: signer})
+	if sender != nil {
+		params.Values = append(params.Values, request.TxFilter{Sender: sender})
 	}
 	return c.performSubscription(params)
 }
@@ -346,18 +351,6 @@ func (c *WSClient) SubscribeForTransactionExecutions(state uint64) (string, erro
 		return "", errors.New("bad state parameter")
 	}
 	params.Values = append(params.Values, request.ExecutionFilter{State: state})
-	return c.performSubscription(params)
-}
-
-// SubscribeForNotaryRequests adds subscription for notary request payloads
-// addition or removal events to this instance of client. It can be filtered by
-// request sender's hash, or main tx signer's hash, nil value puts no such
-// restrictions.
-func (c *WSClient) SubscribeForNotaryRequests(sender *common.Address, mainSigner *common.Address) (string, error) {
-	params := request.NewRawParams("notary_request_event")
-	if sender != nil {
-		params.Values = append(params.Values, request.TxFilter{Sender: sender, Signer: mainSigner})
-	}
 	return c.performSubscription(params)
 }
 

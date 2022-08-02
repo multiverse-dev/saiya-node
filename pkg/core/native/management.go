@@ -18,29 +18,39 @@ var ManagementAddress common.Address = common.Address(common.BytesToAddress([]by
 
 type Management struct {
 	state.NativeContract
+	cs *Contracts
 }
 
 func createContractKey(h common.Address) []byte {
 	return makeAddressKey(prefixContract, h)
 }
 
-func NewManagement() *Management {
-	return &Management{
+func NewManagement(cs *Contracts) *Management {
+	m := &Management{
 		NativeContract: state.NativeContract{
 			Name: nativenames.Management,
 			Contract: state.Contract{
-				Address: ManagementAddress,
-				Code:    []byte{},
+				Address:  ManagementAddress,
+				CodeHash: hash.Keccak256(ManagementAddress[:]),
+				Code:     ManagementAddress[:],
 			},
 		},
+		cs: cs,
 	}
+	mAbi, contractCalls, err := constructAbi(m)
+	if err != nil {
+		panic(err)
+	}
+	m.Abi = *mAbi
+	m.ContractCalls = contractCalls
+	return m
 }
 
-func (m *Management) initialize(ic InteropContext) error {
+func (m *Management) ContractCall_initialize(ic InteropContext) error {
 	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
 		return ErrInitialize
 	}
-	for _, native := range ic.Natives().Contracts {
+	for _, native := range m.cs.Contracts {
 		item, err := io.ToByteArray(&native.Contract)
 		if err != nil {
 			return err
@@ -114,11 +124,15 @@ func (m *Management) Destroy(s *dao.Simple, addr common.Address) bool {
 }
 
 func (m *Management) RequiredGas(ic InteropContext, input []byte) uint64 {
-	if len(input) < 1 {
+	if len(input) < 4 {
 		return 0
 	}
-	switch input[0] {
-	case 0x00:
+	method, err := m.Abi.MethodById(input[:4])
+	if err != nil {
+		return 0
+	}
+	switch method.Name {
+	case "initialize":
 		return 0
 	default:
 		return 0
@@ -126,13 +140,5 @@ func (m *Management) RequiredGas(ic InteropContext, input []byte) uint64 {
 }
 
 func (m *Management) Run(ic InteropContext, input []byte) ([]byte, error) {
-	if len(input) < 1 {
-		return nil, ErrEmptyInput
-	}
-	switch input[0] {
-	case 0x00:
-		return nil, m.initialize(ic)
-	default:
-		return nil, ErrInvalidMethodID
-	}
+	return contractCall(m, &m.NativeContract, ic, input)
 }

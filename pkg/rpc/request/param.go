@@ -2,6 +2,7 @@ package request
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,7 +32,6 @@ type (
 	// allows to filter transactions by senders and signers.
 	TxFilter struct {
 		Sender *common.Address `json:"sender,omitempty"`
-		Signer *common.Address `json:"signer,omitempty"`
 	}
 
 	// NotificationFilter is a wrapper structure representing filter used for
@@ -341,11 +341,10 @@ func (p *Param) GetAddressFromHex() (common.Address, error) {
 	if err != nil {
 		return common.Address{}, err
 	}
-	addr := common.HexToAddress(s)
-	if addr == (common.Address{}) {
+	if !common.IsHexAddress(s) {
 		return common.Address{}, errors.New("invalid address")
 	}
-	return addr, nil
+	return common.HexToAddress(s), nil
 }
 
 // GetBytesHex returns []byte value of the parameter if
@@ -357,6 +356,15 @@ func (p *Param) GetBytesHex() ([]byte, error) {
 	}
 	s = strings.TrimPrefix(s, "0x")
 	return hex.DecodeString(s)
+}
+
+func (p *Param) GetBytesBase64() ([]byte, error) {
+	s, err := p.GetString()
+	if err != nil {
+		return nil, err
+	}
+
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // IsNull returns whether parameter represents JSON nil value.

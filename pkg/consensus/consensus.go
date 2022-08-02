@@ -440,13 +440,13 @@ func (s *service) verifyBlock(b block.Block) bool {
 		return false
 	}
 
-	var fee uint64
+	var gas uint64
 	var pool = mempool.New(len(coreb.Transactions), 0, false)
 	var mainPool = s.Chain.GetMemPool()
 	for _, tx := range coreb.Transactions {
 		var err error
 
-		fee += tx.Gas()
+		gas += tx.Gas()
 		if mainPool.ContainsKey(tx.Hash()) {
 			err = pool.Add(tx, s.Chain)
 			if err == nil {
@@ -467,11 +467,11 @@ func (s *service) verifyBlock(b block.Block) bool {
 		}
 	}
 
-	maxBlockSysFee := s.ProtocolConfiguration.MaxBlockSystemFee
-	if fee > maxBlockSysFee {
+	maxBlockGas := s.ProtocolConfiguration.MaxBlockGas
+	if gas > maxBlockGas {
 		s.log.Warn("proposed block system fee exceeds config MaxBlockSystemFee",
-			zap.Int("max system fee allowed", int(maxBlockSysFee)),
-			zap.Int("block system fee", int(fee)))
+			zap.Int("max system fee allowed", int(maxBlockGas)),
+			zap.Int("block system fee", int(gas)))
 		return false
 	}
 

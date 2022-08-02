@@ -173,6 +173,7 @@ func (s *StateDB) Empty(address common.Address) bool {
 }
 
 func (s *StateDB) PrepareAccessList(sender common.Address, dest *common.Address, precompiles []common.Address, list types.AccessList) {
+	s.CurrentStore().accesslist = newAccessList()
 	s.AddAddressToAccessList(sender)
 	if dest != nil {
 		s.AddAddressToAccessList(*dest)

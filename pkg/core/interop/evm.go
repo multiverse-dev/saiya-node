@@ -1,4 +1,4 @@
-package evm
+package interop
 
 import (
 	"math/big"
@@ -6,17 +6,20 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/multiverse-dev/saiya/pkg/config"
-	"github.com/multiverse-dev/saiya/pkg/evm/vm"
+	"github.com/multiverse-dev/saiya/pkg/vm"
 )
 
-const TestGas uint64 = 2000000000
+type EVM struct {
+	*vm.EVM
+	ChainConfig *params.ChainConfig
+}
 
 func NewEVM(bctx vm.BlockContext,
 	tctx vm.TxContext,
 	sdb vm.StateDB,
 	protocolSettings config.ProtocolConfiguration,
-	extraPrecompiles map[common.Address]vm.PrecompiledContract) *vm.EVM {
-	evm := vm.NewEVM(bctx, tctx, sdb, &params.ChainConfig{
+	nativeContracts map[common.Address]vm.NativeContract) *EVM {
+	chainConfig := &params.ChainConfig{
 		ChainID:             big.NewInt(int64(protocolSettings.ChainID)),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
@@ -32,6 +35,10 @@ func NewEVM(bctx vm.BlockContext,
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
 		Ethash:              new(params.EthashConfig),
-	}, vm.Config{}, extraPrecompiles)
-	return evm
+	}
+	evm := vm.NewEVM(bctx, tctx, sdb, chainConfig, vm.Config{}, nativeContracts)
+	return &EVM{
+		EVM:         evm,
+		ChainConfig: chainConfig,
+	}
 }

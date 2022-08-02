@@ -28,14 +28,14 @@ const MaxMultiSigCount int = 21
 // SignatureLen is the length of standard signature for 256-bit EC key.
 const SignatureLen = 64
 
-// PublicKeys is a list of public keys.
+// Parameters is a list of public keys.
 type PublicKeys []*PublicKey
 
 var big0 = big.NewInt(0)
 var big3 = big.NewInt(3)
 
 // NewPublicKeysFromStrings converts an array of string-encoded P256 public keys
-// into an array of PublicKeys.
+// into an array of Parameters.
 func NewPublicKeysFromStrings(ss []string) (PublicKeys, error) {
 	arr := make([]*PublicKey, len(ss))
 	for i := range ss {
@@ -54,14 +54,14 @@ func (keys PublicKeys) Less(i, j int) bool {
 	return keys[i].Cmp(keys[j]) == -1
 }
 
-// DecodeBytes decodes a PublicKeys from the given slice of bytes.
+// DecodeBytes decodes a Parameters from the given slice of bytes.
 func (keys *PublicKeys) DecodeBytes(data []byte) error {
 	b := io.NewBinReaderFromBuf(data)
 	b.ReadArray(keys)
 	return b.Err
 }
 
-// Bytes encodes PublicKeys to the new slice of bytes.
+// Bytes encodes Parameters to the new slice of bytes.
 func (keys *PublicKeys) Bytes() []byte {
 	buf := io.NewBufBinWriter()
 	buf.WriteArray(*keys)
@@ -71,7 +71,7 @@ func (keys *PublicKeys) Bytes() []byte {
 	return buf.Bytes()
 }
 
-// Contains checks whether passed param contained in PublicKeys.
+// Contains checks whether passed param contained in Parameters.
 func (keys PublicKeys) Contains(pKey *PublicKey) bool {
 	for _, key := range keys {
 		if key.Equal(pKey) {

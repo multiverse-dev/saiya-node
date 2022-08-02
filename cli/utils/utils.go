@@ -13,7 +13,7 @@ import (
 func NewCommands() []cli.Command {
 	return []cli.Command{{
 		Name:  "utils",
-		Usage: "Convert data",
+		Usage: "convert data",
 		Subcommands: []cli.Command{
 			{
 				Name:      "decodeBig",

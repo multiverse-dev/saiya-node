@@ -32,7 +32,7 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
-	"github.com/multiverse-dev/saiya/pkg/evm"
+	evm "github.com/multiverse-dev/saiya/pkg/vm"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +46,7 @@ const (
 	defaultMemPoolSize                     = 50000
 	defaultP2PNotaryRequestPayloadPoolSize = 1000
 	defaultMaxBlockSize                    = 262144
-	defaultMaxBlockSystemFee               = 900000000000
+	defaultMaxBlockGas                     = 90000000000
 	defaultMaxTraceableBlocks              = 2102400 // 1 year of 15s blocks
 	defaultMaxTransactionsPerBlock         = 512
 	// HeaderVerificationGasLimit is the maximum amount of SAIYA for block header verification.
@@ -166,13 +166,6 @@ type bcEvent struct {
 	appExecResults []*types.Receipt
 }
 
-// transferData is used for transfer caching during storeBlock.
-type transferData struct {
-	Info  state.TokenTransferInfo
-	Log11 state.TokenTransferLog
-	Log17 state.TokenTransferLog
-}
-
 // NewBlockchain returns a new blockchain object the will use the
 // given Store as its underlying storage. For it to work correctly you need
 // to spawn a goroutine for its Run method after this initialization.
@@ -193,9 +186,9 @@ func NewBlockchain(s storage.Store, cfg config.ProtocolConfiguration, log *zap.L
 		cfg.MaxBlockSize = defaultMaxBlockSize
 		log.Info("MaxBlockSize is not set or wrong, setting default value", zap.Uint32("MaxBlockSize", cfg.MaxBlockSize))
 	}
-	if cfg.MaxBlockSystemFee <= 0 {
-		cfg.MaxBlockSystemFee = defaultMaxBlockSystemFee
-		log.Info("MaxBlockSystemFee is not set or wrong, setting default value", zap.Uint64("MaxBlockSystemFee", cfg.MaxBlockSystemFee))
+	if cfg.MaxBlockGas <= 0 {
+		cfg.MaxBlockGas = defaultMaxBlockGas
+		log.Info("MaxBlockSystemFee is not set or wrong, setting default value", zap.Uint64("MaxBlockSystemFee", cfg.MaxBlockGas))
 	}
 	if cfg.MaxTraceableBlocks == 0 {
 		cfg.MaxTraceableBlocks = defaultMaxTraceableBlocks
@@ -205,13 +198,6 @@ func NewBlockchain(s storage.Store, cfg config.ProtocolConfiguration, log *zap.L
 		cfg.MaxTransactionsPerBlock = defaultMaxTransactionsPerBlock
 		log.Info("MaxTransactionsPerBlock is not set or wrong, using default value",
 			zap.Uint16("MaxTransactionsPerBlock", cfg.MaxTransactionsPerBlock))
-	}
-	if cfg.MaxValidUntilBlockIncrement == 0 {
-		const secondsPerDay = int(24 * time.Hour / time.Second)
-
-		cfg.MaxValidUntilBlockIncrement = uint32(secondsPerDay / cfg.SecondsPerBlock)
-		log.Info("MaxValidUntilBlockIncrement is not set or wrong, using default value",
-			zap.Uint32("MaxValidUntilBlockIncrement", cfg.MaxValidUntilBlockIncrement))
 	}
 
 	if cfg.RemoveUntraceableBlocks && cfg.GarbageCollectionPeriod == 0 {
@@ -255,7 +241,7 @@ func (bc *Blockchain) init() error {
 		bc.dao.PutVersion(ver)
 		bc.dao.Version = ver
 		bc.persistent.Version = ver
-		genesisBlock, err := createGenesisBlock(bc.config)
+		genesisBlock, err := createGenesisBlock()
 		if err != nil {
 			return err
 		}
@@ -305,7 +291,7 @@ func (bc *Blockchain) init() error {
 		if len(bc.headerHashes) > 0 {
 			targetHash = bc.headerHashes[len(bc.headerHashes)-1]
 		} else {
-			genesisBlock, err := createGenesisBlock(bc.config)
+			genesisBlock, err := createGenesisBlock()
 			if err != nil {
 				return err
 			}
@@ -736,6 +722,7 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 		}
 		close(aerdone)
 	}()
+
 	var err error
 	var logIndex uint
 	var cumulativeGas uint64
@@ -754,6 +741,7 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 			left    uint64
 			address common.Address
 		)
+		sdb.PrepareAccessList(tx.From(), tx.To(), evm.PrecompiledAddressesBerlin, nil)
 		if tx.To() == nil {
 			_, address, left, err = vm.Create(ic, tx.Data(), gas, tx.Value())
 		} else {
@@ -761,13 +749,15 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 		}
 		if err != nil {
 			bc.log.Debug("error when executing tx", zap.Uint32("block_index", block.Index),
-				zap.Int("tx_index", i),
+				zap.String("tx_hash", tx.Hash().String()),
 				zap.String("error", err.Error()))
 		}
 		gasUsed := tx.Gas() - left
 		logs := sdb.GetLogs()
-		sdb.SetNonce(ic.Sender(), sdb.GetNonce(ic.Sender())+1)
-		sdb.AddBalance(ic.Coinbase(), big.NewInt(0).Mul(big.NewInt(int64(netFee)), gasPrice))
+		sdb.SetNonce(tx.From(), sdb.GetNonce(tx.From())+1)
+		if block.Index > 0 {
+			sdb.AddBalance(ic.Coinbase(), big.NewInt(0).Mul(big.NewInt(int64(netFee)), gasPrice))
+		}
 		if gas > left {
 			commitAddress, err := bc.GetCommitteeAddress()
 			if err != nil {
@@ -785,7 +775,6 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 		cumulativeGas += gasUsed
 		for _, log := range logs {
 			log.BlockHash = block.Hash()
-			log.BlockNumber = uint64(block.Index)
 			log.TxHash = tx.Hash()
 			log.TxIndex = uint(i)
 			log.Index = logIndex
@@ -1208,7 +1197,7 @@ func (bc *Blockchain) ApplyPolicyToTxSet(txes []*transaction.Transaction) []*tra
 	}
 	validators, _ := bc.contracts.Designate.GetValidators(bc.dao, bc.BlockHeight()+1)
 	maxBlockSize := bc.config.MaxBlockSize
-	maxBlockSysFee := bc.config.MaxBlockSystemFee
+	maxBlockSysFee := bc.config.MaxBlockGas
 	oldVC := bc.knownValidatorsCount.Load()
 	defaultWitness := bc.defaultBlockWitness.Load()
 	curVC := len(validators)
@@ -1257,7 +1246,7 @@ func (bc *Blockchain) verifyHeader(currHeader, prevHeader *block.Header) error {
 	if prevHeader.Timestamp >= currHeader.Timestamp {
 		return ErrHdrInvalidTimestamp
 	}
-	return bc.verifyHeaderWitnesses(currHeader, prevHeader)
+	return bc.verifyHeaderWitness(currHeader, prevHeader)
 }
 
 // Various errors that could be returned upon verification.
@@ -1274,13 +1263,7 @@ var (
 // verifyAndPoolTx verifies whether a transaction is bonafide or not and tries
 // to add it to the mempool given.
 func (bc *Blockchain) verifyAndPoolTx(t *transaction.Transaction, pool *mempool.Pool, feer mempool.Feer, data ...interface{}) error {
-	// This code can technically be moved out of here, because it doesn't
-	// really require a chain lock.
-	err := evm.IsScriptCorrect(t.Data())
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidScript, err)
-	}
-	err = t.IsValid()
+	err := t.IsValid()
 	if err != nil {
 		return err
 	}
@@ -1309,7 +1292,7 @@ func (bc *Blockchain) verifyAndPoolTx(t *transaction.Transaction, pool *mempool.
 	}
 
 	// From need to recover from signature, so place this infront of nonce and policy check
-	err = bc.verifyTxWitnesses(t, nil)
+	err = t.Verify(bc.config.ChainID)
 	if err != nil {
 		return err
 	}
@@ -1373,7 +1356,7 @@ func (bc *Blockchain) IsTxStillRelevant(t *transaction.Transaction, txpool *memp
 		return false
 	}
 	if recheckWitness {
-		return bc.verifyTxWitnesses(t, nil) == nil
+		return t.Verify(bc.config.ChainID) == nil
 	}
 	return true
 }
@@ -1455,14 +1438,11 @@ func (bc *Blockchain) GetTestVM(tx *transaction.Transaction, b *block.Block) (*i
 
 // Various witness verification errors.
 var (
-	ErrWitnessHashMismatch         = errors.New("witness hash mismatch")
-	ErrNativeContractWitness       = errors.New("native contract witness must have empty verification script")
-	ErrVerificationFailed          = errors.New("signature check failed")
-	ErrInvalidInvocation           = errors.New("invalid invocation script")
-	ErrInvalidSignature            = fmt.Errorf("%w: invalid signature", ErrVerificationFailed)
-	ErrInvalidVerification         = errors.New("invalid verification script")
-	ErrUnknownVerificationContract = errors.New("unknown verification contract")
-	ErrInvalidVerificationContract = errors.New("verification contract is missing `verify` method")
+	ErrWitnessHashMismatch = errors.New("witness address mismatch")
+	ErrVerificationFailed  = errors.New("signature check failed")
+	ErrInvalidInvocation   = errors.New("invalid invocation script")
+	ErrInvalidSignature    = fmt.Errorf("%w: invalid signature", ErrVerificationFailed)
+	ErrInvalidVerification = errors.New("invalid verification script")
 )
 
 // InitVerificationContext initializes context for witness check.
@@ -1474,28 +1454,13 @@ func (bc *Blockchain) InitVerificationContext(hash common.Address, witness *tran
 // the amount of SAIYA consumed during verification and an error.
 func (bc *Blockchain) VerifyWitness(h common.Address, c hash.Hashable, w *transaction.Witness) error {
 	if h != (w.Address()) {
-		return errors.New("public key is not from sender")
+		return ErrWitnessHashMismatch
 	}
 	return w.VerifyHashable(bc.config.ChainID, c)
 }
 
-func (bc *Blockchain) VerifyWitnesses(h common.Address, c hash.Hashable, w *block.Witnesses) error {
-	if h != w.Address() {
-		return errors.New("public key is not from sender")
-	}
-	r := w.VerifyHashable(bc.config.ChainID, c)
-	if r {
-		return nil
-	}
-	return errors.New("invalid signature")
-}
-
-func (bc *Blockchain) verifyTxWitnesses(t *transaction.Transaction, block *block.Block) error {
-	return t.Verify(bc.config.ChainID)
-}
-
-// verifyHeaderWitnesses is a block-specific implementation of VerifyWitnesses logic.
-func (bc *Blockchain) verifyHeaderWitnesses(currHeader, prevHeader *block.Header) error {
+// verifyHeaderWitness is a block-specific implementation of VerifyWitnesses logic.
+func (bc *Blockchain) verifyHeaderWitness(currHeader, prevHeader *block.Header) error {
 	validators, err := bc.GetValidators(currHeader.Index)
 	if err != nil {
 		panic(err)
@@ -1536,7 +1501,7 @@ func (bc *Blockchain) GetFeePerByte() uint64 {
 
 func (bc *Blockchain) GetGasPrice() *big.Int {
 	if bc.BlockHeight() == 0 {
-		return big.NewInt(native.DefaultGasPrice)
+		return big.NewInt(int64(native.DefaultGasPrice))
 	}
 	return bc.contracts.Policy.GetGasPriceInternal(bc.dao)
 }

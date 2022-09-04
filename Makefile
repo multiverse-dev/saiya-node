@@ -20,6 +20,9 @@ check-version:
 	git fetch && (! git rev-list ${VERSION})
 
 deps:
+	cd zk && \
+	cargo build --release
+	cp -f zk/target/release/libzk.dylib pkg/crypto/zk/lib
 	@CGO_ENABLED=0 \
 	go mod download
 	@CGO_ENABLED=0 \

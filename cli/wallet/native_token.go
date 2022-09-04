@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/multiverse-dev/saiya/cli/flags"
+	"github.com/multiverse-dev/saiya/cli/input"
 	"github.com/multiverse-dev/saiya/cli/options"
 	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"github.com/urfave/cli"
@@ -37,14 +38,14 @@ func newNativeTokenCommands() []cli.Command {
 	return []cli.Command{
 		{
 			Name:      "balance",
-			Usage:     "get address SAI balance",
+			Usage:     "get address Sai balance",
 			UsageText: "balance --wallet <path> --rpc-endpoint <node> [--timeout <time>] [--address <address>]",
 			Action:    balance,
 			Flags:     balanceFlags,
 		},
 		{
 			Name:      "transfer",
-			Usage:     "transfer SAI to address",
+			Usage:     "transfer Sai to address",
 			UsageText: "transfer --wallet <path> --rpc-endpoint <node> [--from <fromAddress>] --to <toAddress> --amount <amount>",
 			Action:    transferNativeToken,
 			Flags:     transferFlags,
@@ -119,24 +120,44 @@ func transferNativeToken(ctx *cli.Context) error {
 	if !ok {
 		return cli.NewExitError(fmt.Errorf("could not parse amount: %s", samount), 1)
 	}
-	var from common.Address
+	var facc *wallet.Account
 	fromFlag := ctx.Generic("from").(*flags.Address)
 	if fromFlag.IsSet {
-		from = fromFlag.Address()
+		from := fromFlag.Address()
 		if from == (common.Address{}) {
 			return cli.NewExitError(fmt.Errorf("invalid from address"), 1)
+		}
+		for _, acc := range wall.Accounts {
+			if acc.Address == from {
+				facc = acc
+				break
+			}
 		}
 	} else {
 		if len(wall.Accounts) == 0 {
 			return cli.NewExitError(fmt.Errorf("could not find any account in wallet"), 1)
 		}
-		facc := wall.Accounts[0]
+		facc = wall.Accounts[0]
 		for _, acc := range wall.Accounts {
 			if acc.Default {
 				facc = acc
+				break
 			}
 		}
-		from = facc.Address
 	}
-	return MakeNeoTx(ctx, wall, from, to, amount, []byte{})
+	if facc == nil {
+		return cli.NewExitError(fmt.Errorf("could not find any account in wallet"), 1)
+	}
+	if facc.IsMultiSig() {
+		return MakeSaiTx(ctx, wall, facc.Address, to, amount, nil)
+	}
+	pass, err := input.ReadPassword(fmt.Sprintf("Enter %s password > ", facc.Address))
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("error reading password: %w", err), 1)
+	}
+	err = facc.Decrypt(pass, wall.Scrypt)
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("unable to decrypt account: %s", facc.Address), 1)
+	}
+	return MakeEthTx(ctx, facc, &to, amount, nil)
 }

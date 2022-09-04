@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -41,7 +40,7 @@ const (
 	headerBatchCount = 2000
 	version          = "0.2.5"
 
-	defaultInitialSAI                      = 52000000 //wei
+	defaultInitialSai                      = 52000000 //wei
 	defaultGCPeriod                        = 10000
 	defaultMemPoolSize                     = 50000
 	defaultP2PNotaryRequestPayloadPoolSize = 1000
@@ -49,8 +48,8 @@ const (
 	defaultMaxBlockGas                     = 90000000000
 	defaultMaxTraceableBlocks              = 2102400 // 1 year of 15s blocks
 	defaultMaxTransactionsPerBlock         = 512
-	// HeaderVerificationGasLimit is the maximum amount of SAIYA for block header verification.
-	HeaderVerificationGasLimit = 3_00000000 // 3 SAIYA
+	// HeaderVerificationGasLimit is the maximum amount of Sai for block header verification.
+	HeaderVerificationGasLimit = 3_00000000 // 3 Sai
 	defaultStateSyncInterval   = 40000
 )
 
@@ -174,9 +173,9 @@ func NewBlockchain(s storage.Store, cfg config.ProtocolConfiguration, log *zap.L
 		return nil, errors.New("empty logger")
 	}
 
-	if cfg.InitialSAISupply <= 0 {
-		cfg.InitialSAISupply = defaultInitialSAI
-		log.Info("initial gas supply is not set or wrong, setting default value", zap.Uint64("InitialSAIYASupply", cfg.InitialSAISupply))
+	if cfg.InitialSaiSupply <= 0 {
+		cfg.InitialSaiSupply = defaultInitialSai
+		log.Info("initial gas supply is not set or wrong, setting default value", zap.Uint64("InitialSaiSupply", cfg.InitialSaiSupply))
 	}
 	if cfg.MemPoolSize <= 0 {
 		cfg.MemPoolSize = defaultMemPoolSize
@@ -324,7 +323,24 @@ func (bc *Blockchain) init() error {
 		return fmt.Errorf("can't init MPT at height %d: %w", bHeight, err)
 	}
 
+	err = bc.initializeNativeCache(bc.blockHeight, bc.dao)
+	if err != nil {
+		return fmt.Errorf("can't init natives cache: %w", err)
+	}
+
 	return bc.updateExtensibleWhitelist(bHeight)
+}
+
+func (bc *Blockchain) initializeNativeCache(blockHeight uint32, d *dao.Simple) error {
+	err := bc.contracts.Designate.UpdateCache(d)
+	if err != nil {
+		return fmt.Errorf("can't init cache for Designation native contract: %w", err)
+	}
+	err = bc.contracts.Policy.UpdateCache(d)
+	if err != nil {
+		return fmt.Errorf("can't init cache for Policy native contract: %w", err)
+	}
+	return nil
 }
 
 // Run runs chain loop, it needs to be run as goroutine and executing it is
@@ -388,62 +404,6 @@ func (bc *Blockchain) tryRunGC(old uint32) time.Duration {
 		tgtBlock /= int64(bc.config.GarbageCollectionPeriod)
 		tgtBlock *= int64(bc.config.GarbageCollectionPeriod)
 		dur = bc.stateRoot.GC(uint32(tgtBlock), bc.store)
-		dur += bc.removeOldTransfers(uint32(tgtBlock))
-	}
-	return dur
-}
-
-func (bc *Blockchain) removeOldTransfers(index uint32) time.Duration {
-	bc.log.Info("starting transfer data garbage collection", zap.Uint32("index", index))
-	start := time.Now()
-	h, err := bc.GetHeader(bc.GetHeaderHash(int(index)))
-	if err != nil {
-		dur := time.Since(start)
-		bc.log.Error("failed to find block header for transfer GC", zap.Duration("time", dur), zap.Error(err))
-		return dur
-	}
-	var removed, kept int64
-	var ts = h.Timestamp
-	prefixes := []byte{byte(storage.STERC721Transfers), byte(storage.STERC20Transfers)}
-
-	for i := range prefixes {
-		var acc common.Address
-		var canDrop bool
-
-		err = bc.store.SeekGC(storage.SeekRange{
-			Prefix:    prefixes[i : i+1],
-			Backwards: true, // From new to old.
-		}, func(k, v []byte) bool {
-			// We don't look inside of the batches, it requires too much effort, instead
-			// we drop batches that are confirmed to contain outdated entries.
-			var batchAcc common.Address
-			var batchTs = binary.BigEndian.Uint64(k[1+common.AddressLength:])
-			copy(batchAcc[:], k[1:])
-
-			if batchAcc != acc { // Some new account we're iterating over.
-				acc = batchAcc
-			} else if canDrop { // We've seen this account and all entries in this batch are guaranteed to be outdated.
-				removed++
-				return false
-			}
-			// We don't know what's inside, so keep the current
-			// batch anyway, but allow to drop older ones.
-			canDrop = batchTs <= ts
-			kept++
-			return true
-		})
-		if err != nil {
-			break
-		}
-	}
-	dur := time.Since(start)
-	if err != nil {
-		bc.log.Error("failed to flush transfer data GC changeset", zap.Duration("time", dur), zap.Error(err))
-	} else {
-		bc.log.Info("finished transfer data garbage collection",
-			zap.Int64("removed", removed),
-			zap.Int64("kept", kept),
-			zap.Duration("time", dur))
 	}
 	return dur
 }
@@ -557,19 +517,10 @@ func (bc *Blockchain) AddBlock(block *block.Block) error {
 		mp = mempool.New(len(block.Transactions), 0, false)
 		for _, tx := range block.Transactions {
 			var err error
-
 			// Transactions are verified before adding them
 			// into the pool, so there is no point in doing
 			// it again even if we're verifying in-block transactions.
 			if bc.memPool.ContainsKey(tx.Hash()) {
-				// We always verify ethereum legacy tx
-				// because we need ecrecover sender
-				if tx.Type == transaction.EthLegacyTxType {
-					err = tx.Verify(bc.config.ChainID)
-					if err != nil {
-						return err
-					}
-				}
 				err = mp.Add(tx, bc)
 				if err == nil {
 					continue
@@ -723,9 +674,16 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 		close(aerdone)
 	}()
 
-	var err error
-	var logIndex uint
-	var cumulativeGas uint64
+	var (
+		err           error
+		execErr       error
+		logIndex      uint
+		cumulativeGas uint64
+	)
+	err = bc.onPersist(cache, block)
+	if err != nil {
+		return fmt.Errorf("onPersist failed: %w", err)
+	}
 	sdb := statedb.NewStateDB(cache, bc)
 	for i, tx := range block.Transactions {
 		bc.log.Debug("executing tx", zap.String("hash", tx.Hash().String()))
@@ -741,16 +699,16 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 			left    uint64
 			address common.Address
 		)
-		sdb.PrepareAccessList(tx.From(), tx.To(), evm.PrecompiledAddressesBerlin, nil)
+		sdb.PrepareAccessList(tx.From(), tx.To(), evm.PrecompiledAddressesBerlin, tx.AccessList())
 		if tx.To() == nil {
-			_, address, left, err = vm.Create(ic, tx.Data(), gas, tx.Value())
+			_, address, left, execErr = vm.Create(ic, tx.Data(), gas, tx.Value())
 		} else {
-			_, left, err = vm.Call(ic, *tx.To(), tx.Data(), gas, tx.Value())
+			_, left, execErr = vm.Call(ic, *tx.To(), tx.Data(), gas, tx.Value())
 		}
-		if err != nil {
+		if execErr != nil {
 			bc.log.Debug("error when executing tx", zap.Uint32("block_index", block.Index),
 				zap.String("tx_hash", tx.Hash().String()),
-				zap.String("error", err.Error()))
+				zap.String("error", execErr.Error()))
 		}
 		gasUsed := tx.Gas() - left
 		logs := sdb.GetLogs()
@@ -790,11 +748,16 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 			CumulativeGasUsed: cumulativeGas,
 			Logs:              logs,
 		}
-		if err == nil {
+		aer.Bloom = types.BytesToBloom(types.LogsBloom(aer.Logs))
+		if execErr == nil {
 			aer.Status = 1
 		}
 		appExecResults = append(appExecResults, aer)
 		aerchan <- aer
+	}
+	err = bc.postPersist(cache, block)
+	if err != nil {
+		return fmt.Errorf("postPersist failed: %w", err)
 	}
 	close(aerchan)
 	b := mpt.MapToMPTBatch(cache.Store.GetStorageChanges())
@@ -862,8 +825,25 @@ func (bc *Blockchain) storeBlock(block *block.Block, txpool *mempool.Pool) error
 	return nil
 }
 
+func (bc *Blockchain) onPersist(d *dao.Simple, b *block.Block) error {
+	return bc.contracts.OnPersist(d, b)
+}
+
+func (bc *Blockchain) postPersist(d *dao.Simple, b *block.Block) error {
+	err := bc.contracts.PostPersist(d, b)
+	if err != nil {
+		return err
+	}
+	nodes, index, err := bc.contracts.Designate.GetDesignatedByRole(d, noderoles.StateValidator, b.Index)
+	if err != nil {
+		return err
+	}
+	bc.stateRoot.UpdateStateValidators(index, nodes)
+	return nil
+}
+
 func (bc *Blockchain) updateExtensibleWhitelist(height uint32) error {
-	stateVals, err := bc.contracts.Designate.GetDesignatedByRole(bc.dao, noderoles.StateValidator, height+1)
+	stateVals, _, err := bc.contracts.Designate.GetDesignatedByRole(bc.dao, noderoles.StateValidator, height+1)
 	if err != nil {
 		return err
 	}
@@ -899,9 +879,9 @@ func (bc *Blockchain) IsExtensibleAllowed(u common.Address) bool {
 	return false
 }
 
-// GetUtilityTokenBalance returns utility token (SAIYA) balance for the acc.
+// GetUtilityTokenBalance returns utility token (Sai) balance for the acc.
 func (bc *Blockchain) GetUtilityTokenBalance(acc common.Address) *big.Int {
-	bs := bc.contracts.SAI.GetBalance(bc.dao, acc)
+	bs := bc.contracts.Sai.GetBalance(bc.dao, acc)
 	if bs == nil {
 		return big.NewInt(0)
 	}
@@ -1180,7 +1160,7 @@ func (bc *Blockchain) UnsubscribeFromExecutions(ch chan<- *types.Receipt) {
 
 // FeePerByte returns transaction network fee per byte.
 func (bc *Blockchain) FeePerByte() uint64 {
-	return bc.contracts.Policy.GetFeePerByteInternal(bc.dao)
+	return bc.contracts.Policy.GetFeePerByte(bc.dao)
 }
 
 // GetMemPool returns the memory pool of the blockchain.
@@ -1266,6 +1246,9 @@ func (bc *Blockchain) verifyAndPoolTx(t *transaction.Transaction, pool *mempool.
 	err := t.IsValid()
 	if err != nil {
 		return err
+	}
+	if t.Gas() > bc.config.MaxBlockGas {
+		return fmt.Errorf("gas exceeds block gas limit, limit: %d, actual: %d", bc.config.MaxBlockGas, t.Gas())
 	}
 	if t.GasPrice().Cmp(bc.GetGasPrice()) < 0 {
 		return fmt.Errorf("gas price too low, expect %s, actual %s", bc.GetGasPrice(), t.GasPrice())
@@ -1445,15 +1428,10 @@ var (
 	ErrInvalidVerification = errors.New("invalid verification script")
 )
 
-// InitVerificationContext initializes context for witness check.
-func (bc *Blockchain) InitVerificationContext(hash common.Address, witness *transaction.Witness) error {
-	return nil
-}
-
 // VerifyWitness checks that w is a correct witness for c signed by h. It returns
-// the amount of SAIYA consumed during verification and an error.
+// the amount of Sai consumed during verification and an error.
 func (bc *Blockchain) VerifyWitness(h common.Address, c hash.Hashable, w *transaction.Witness) error {
-	if h != (w.Address()) {
+	if h != w.Address() {
 		return ErrWitnessHashMismatch
 	}
 	return w.VerifyHashable(bc.config.ChainID, c)
@@ -1476,9 +1454,9 @@ func (bc *Blockchain) verifyHeaderWitness(currHeader, prevHeader *block.Header) 
 	return nil
 }
 
-// UtilityTokenHash returns the utility token (SAIYA) native contract hash.
+// UtilityTokenHash returns the utility token (Sai) native contract hash.
 func (bc *Blockchain) UtilityTokenAddress() common.Address {
-	return bc.contracts.SAI.Address
+	return bc.contracts.Sai.Address
 }
 
 // ManagementContractHash returns management contract's hash.
@@ -1496,14 +1474,14 @@ func (bc *Blockchain) GetFeePerByte() uint64 {
 	if bc.BlockHeight() == 0 {
 		return native.DefaultFeePerByte
 	}
-	return bc.contracts.Policy.GetFeePerByteInternal(bc.dao)
+	return bc.contracts.Policy.GetFeePerByte(bc.dao)
 }
 
 func (bc *Blockchain) GetGasPrice() *big.Int {
 	if bc.BlockHeight() == 0 {
 		return big.NewInt(int64(native.DefaultGasPrice))
 	}
-	return bc.contracts.Policy.GetGasPriceInternal(bc.dao)
+	return bc.contracts.Policy.GetGasPrice(bc.dao)
 }
 
 func (bc *Blockchain) Contracts() *native.Contracts {

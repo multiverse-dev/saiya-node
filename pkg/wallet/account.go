@@ -50,7 +50,7 @@ func (a *Account) SignTx(chainId uint64, t *transaction.Transaction) error {
 		return errors.New("account is not unlocked")
 	}
 	switch t.Type {
-	case transaction.SaiyaTxType:
+	case transaction.SaiTxType:
 		sig := a.privateKey.SignHashable(chainId, t)
 		witness := transaction.Witness{
 			VerificationScript: (*a.privateKey.PublicKey()).CreateVerificationScript(),
@@ -58,7 +58,7 @@ func (a *Account) SignTx(chainId uint64, t *transaction.Transaction) error {
 		}
 		t.WithWitness(witness)
 		return nil
-	case transaction.EthLegacyTxType:
+	case transaction.EthTxType:
 		sig, err := crypto.Sign(t.SignHash(chainId).Bytes(), &a.privateKey.PrivateKey)
 		if err != nil {
 			return err

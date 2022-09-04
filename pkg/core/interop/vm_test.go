@@ -22,7 +22,7 @@ type testNativeContracts struct {
 func newTestNativeContracts() *testNativeContracts {
 	return &testNativeContracts{
 		cs: native.NewContracts(config.ProtocolConfiguration{
-			InitialSAISupply: 100,
+			InitialSaiSupply: 100,
 		}),
 	}
 }

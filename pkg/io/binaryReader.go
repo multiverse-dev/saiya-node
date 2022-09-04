@@ -29,6 +29,7 @@ func NewBinReaderFromBuf(b []byte) *BinReader {
 	return NewBinReaderFromIO(r)
 }
 
+// ReadByte to impl rlp.ByteReader 
 func (r *BinReader) ReadByte() (byte, error) {
 	return r.ReadB(), r.Err
 }

@@ -9,14 +9,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
 	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const (
-	EthLegacyTxType     = byte(0)
-	SaiyaTxType         = byte(1)
+	EthTxType           = byte(0)
+	SaiTxType           = byte(1)
 	SignatureLength     = 64
 	MaxScriptLength     = math.MaxUint16
 	MaxTransactionSize  = 102400
@@ -28,13 +27,11 @@ var (
 )
 
 type Transaction struct {
-	Type     byte
-	LegacyTx *types.LegacyTx
-	SaiyaTx  *SaiyaTx
+	Type  byte
+	EthTx *EthTx
+	SaiTx *SaiTx
 
 	Trimmed bool
-	EthSize int
-	EthFrom common.Address
 	hash    atomic.Value
 	size    atomic.Value
 }
@@ -50,12 +47,12 @@ func NewTrimmedTX(hash common.Hash) *Transaction {
 func NewTx(t interface{}) *Transaction {
 	tx := &Transaction{}
 	switch v := t.(type) {
-	case *SaiyaTx:
-		tx.Type = SaiyaTxType
-		tx.SaiyaTx = v
-	case *types.LegacyTx:
-		tx.Type = EthLegacyTxType
-		tx.LegacyTx = v
+	case *SaiTx:
+		tx.Type = SaiTxType
+		tx.SaiTx = v
+	case *EthTx:
+		tx.Type = EthTxType
+		tx.EthTx = v
 	default:
 		panic("unsupport tx")
 	}
@@ -73,10 +70,10 @@ func NewTransactionFromBytes(b []byte) (*Transaction, error) {
 
 func (t *Transaction) Nonce() uint64 {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.Nonce
-	case SaiyaTxType:
-		return t.SaiyaTx.Nonce
+	case EthTxType:
+		return t.EthTx.Nonce()
+	case SaiTxType:
+		return t.SaiTx.Nonce
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -84,10 +81,10 @@ func (t *Transaction) Nonce() uint64 {
 
 func (t *Transaction) To() *common.Address {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.To
-	case SaiyaTxType:
-		return t.SaiyaTx.To
+	case EthTxType:
+		return t.EthTx.To()
+	case SaiTxType:
+		return t.SaiTx.To
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -95,10 +92,10 @@ func (t *Transaction) To() *common.Address {
 
 func (t *Transaction) Gas() uint64 {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.Gas
-	case SaiyaTxType:
-		return t.SaiyaTx.Gas
+	case EthTxType:
+		return t.EthTx.Gas()
+	case SaiTxType:
+		return t.SaiTx.Gas
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -106,10 +103,10 @@ func (t *Transaction) Gas() uint64 {
 
 func (t *Transaction) GasPrice() *big.Int {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.GasPrice
-	case SaiyaTxType:
-		return t.SaiyaTx.GasPrice
+	case EthTxType:
+		return t.EthTx.GasPrice()
+	case SaiTxType:
+		return t.SaiTx.GasPrice
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -122,10 +119,10 @@ func (t Transaction) Cost() *big.Int {
 
 func (t *Transaction) Value() *big.Int {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.Value
-	case SaiyaTxType:
-		return t.SaiyaTx.Value
+	case EthTxType:
+		return t.EthTx.Value()
+	case SaiTxType:
+		return t.SaiTx.Value
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -133,10 +130,10 @@ func (t *Transaction) Value() *big.Int {
 
 func (t *Transaction) Data() []byte {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.LegacyTx.Data
-	case SaiyaTxType:
-		return t.SaiyaTx.Data
+	case EthTxType:
+		return t.EthTx.Data()
+	case SaiTxType:
+		return t.SaiTx.Data
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -148,10 +145,10 @@ func (t *Transaction) Size() int {
 	}
 	var size int
 	switch t.Type {
-	case EthLegacyTxType:
-		size = RlpSize(t.LegacyTx)
-	case SaiyaTxType:
-		size = t.SaiyaTx.Size()
+	case EthTxType:
+		size = int(t.EthTx.Size())
+	case SaiTxType:
+		size = t.SaiTx.Size()
 	default:
 		panic(ErrUnsupportType)
 	}
@@ -161,12 +158,21 @@ func (t *Transaction) Size() int {
 
 func (t *Transaction) From() common.Address {
 	switch t.Type {
-	case EthLegacyTxType:
-		return t.EthFrom
-	case SaiyaTxType:
-		return t.SaiyaTx.From
+	case EthTxType:
+		return t.EthTx.Sender
+	case SaiTxType:
+		return t.SaiTx.From
 	default:
 		panic(ErrUnsupportType)
+	}
+}
+
+func (t *Transaction) AccessList() types.AccessList {
+	switch t.Type {
+	case EthTxType:
+		return t.EthTx.AccessList()
+	default:
+		return nil
 	}
 }
 
@@ -175,19 +181,19 @@ func (t *Transaction) Hash() common.Hash {
 		return hash.(common.Hash)
 	}
 	var h common.Hash
-	if t.Type == EthLegacyTxType {
-		h = hash.RlpHash(t.LegacyTx)
+	if t.Type == EthTxType {
+		h = hash.RlpHash(t.EthTx)
 	} else {
-		h = t.SaiyaTx.Hash()
+		h = t.SaiTx.Hash()
 	}
 	t.hash.Store(h)
 	return h
 }
 
 func (t Transaction) SignHash(chainId uint64) common.Hash {
-	if t.Type == EthLegacyTxType {
-		signer := types.NewEIP2930Signer(big.NewInt(int64(chainId)))
-		return signer.Hash(types.NewTx(t.LegacyTx))
+	if t.Type == EthTxType {
+		signer := types.NewEIP155Signer(big.NewInt(int64(chainId)))
+		return signer.Hash(&t.EthTx.Transaction)
 	} else {
 		return t.Hash()
 	}
@@ -204,11 +210,10 @@ func (t Transaction) FeePerByte() uint64 {
 func (t *Transaction) EncodeBinary(w *io.BinWriter) {
 	w.WriteB(t.Type)
 	switch t.Type {
-	case EthLegacyTxType:
-		err := rlp.Encode(w, t.LegacyTx)
-		w.Err = err
-	case SaiyaTxType:
-		t.SaiyaTx.EncodeBinary(w)
+	case EthTxType:
+		t.EthTx.EncodeBinary(w)
+	case SaiTxType:
+		t.SaiTx.EncodeBinary(w)
 	default:
 		w.Err = ErrUnsupportType
 	}
@@ -217,15 +222,14 @@ func (t *Transaction) EncodeBinary(w *io.BinWriter) {
 func (t *Transaction) DecodeBinary(r *io.BinReader) {
 	t.Type = r.ReadB()
 	switch t.Type {
-	case EthLegacyTxType:
-		inner := new(types.LegacyTx)
-		err := rlp.Decode(r, inner)
-		r.Err = err
-		t.LegacyTx = inner
-	case SaiyaTxType:
-		inner := new(SaiyaTx)
+	case EthTxType:
+		inner := new(EthTx)
 		inner.DecodeBinary(r)
-		t.SaiyaTx = inner
+		t.EthTx = inner
+	case SaiTxType:
+		inner := new(SaiTx)
+		inner.DecodeBinary(r)
+		t.SaiTx = inner
 	default:
 		r.Err = ErrUnsupportType
 	}
@@ -233,16 +237,13 @@ func (t *Transaction) DecodeBinary(r *io.BinReader) {
 
 func (t *Transaction) Verify(chainId uint64) error {
 	switch t.Type {
-	case EthLegacyTxType:
-		signer := types.NewEIP2930Signer(big.NewInt(int64(chainId)))
-		from, err := signer.Sender(types.NewTx(t.LegacyTx))
-		if err != nil {
-			return err
+	case EthTxType:
+		return t.EthTx.Verify(chainId)
+	case SaiTxType:
+		if t.SaiTx.From != t.SaiTx.Witness.Address() {
+			return ErrWitnessUnmatch
 		}
-		t.EthFrom = from
-		return nil
-	case SaiyaTxType:
-		return t.SaiyaTx.Witness.VerifyHashable(chainId, t.SaiyaTx)
+		return t.SaiTx.Witness.VerifyHashable(chainId, t.SaiTx)
 	default:
 		return ErrUnsupportType
 	}
@@ -250,76 +251,79 @@ func (t *Transaction) Verify(chainId uint64) error {
 
 func (t *Transaction) WithSignature(chainId uint64, sig []byte) error {
 	switch t.Type {
-	case EthLegacyTxType:
-		signer := types.NewEIP2930Signer(big.NewInt(int64(chainId)))
-		r, s, v, err := signer.SignatureValues(types.NewTx(t.LegacyTx), sig)
-		if err != nil {
-			return err
-		}
-		t.LegacyTx.V, t.LegacyTx.R, t.LegacyTx.S = v, r, s
-		return nil
+	case EthTxType:
+		return t.EthTx.WithSignature(chainId, sig)
 	default:
 		return ErrUnsupportType
 	}
 }
 
 func (t *Transaction) WithWitness(witness Witness) error {
-	if t.Type != SaiyaTxType {
+	if t.Type != SaiTxType {
 		return ErrUnsupportType
 	}
-	t.SaiyaTx.Witness = witness
+	t.SaiTx.Witness = witness
 	return nil
 }
 
 func (t *Transaction) UnmarshalJSON(b []byte) error {
-	if t.Type == EthLegacyTxType {
-		tx := new(types.LegacyTx)
-		err := unmarshalJSON(b, tx)
-		if err != nil {
-			return err
-		}
-		t.LegacyTx = tx
-		return nil
-	} else if t.Type == SaiyaTxType {
-		tx := new(SaiyaTx)
-		err := json.Unmarshal(b, tx)
-		if err != nil {
-			return err
-		}
-		t.SaiyaTx = tx
-		return nil
-	} else {
-		return ErrUnsupportType
+	tmp := make(map[string]interface{})
+	err := json.Unmarshal(b, &tmp)
+	if err != nil {
+		return err
 	}
+	if _, ok := tmp["witness"]; ok {
+		tx := new(SaiTx)
+		err = json.Unmarshal(b, tx)
+		if err != nil {
+			return err
+		}
+		t.Type = SaiTxType
+		t.SaiTx = tx
+		return nil
+	}
+	if _, ok := tmp["type"]; ok {
+		tx := new(EthTx)
+		err = json.Unmarshal(b, tx)
+		if err != nil {
+			return err
+		}
+		t.Type = EthTxType
+		t.EthTx = tx
+		return nil
+	}
+	return ErrUnsupportType
 }
 
-func (t *Transaction) MarshalJSON() ([]byte, error) {
+func (t Transaction) MarshalJSON() ([]byte, error) {
 	if t.Trimmed {
 		return json.Marshal(t.Hash())
 	}
 	switch t.Type {
-	case EthLegacyTxType:
-		return marshlJSON(t.LegacyTx)
-	case SaiyaTxType:
-		return json.Marshal(t.SaiyaTx)
+	case EthTxType:
+		return json.Marshal(t.EthTx)
+	case SaiTxType:
+		return json.Marshal(t.SaiTx)
 	default:
 		return nil, ErrUnsupportType
 	}
 }
 
 var (
-	ErrInvalidTxType = errors.New("invalid tx type")
+	ErrInvalidTxType    = errors.New("invalid tx type")
+	ErrTipVeryHigh      = errors.New("max priority fee per gas higher than 2^256-1")
+	ErrFeeCapVeryHigh   = errors.New("max fee per gas higher than 2^256-1")
+	ErrTipAboveFeeCap   = errors.New("max priority fee per gas higher than max fee per gas")
+	ErrValueVeryHigh    = errors.New("value higher than 2^256-1")
+	ErrGasPriceVeryHigh = errors.New("gas price higher than 2^256-1")
 )
 
 func (t Transaction) IsValid() error {
 	switch t.Type {
-	case EthLegacyTxType:
-		if t.LegacyTx.Value.Sign() < 0 {
-			return ErrNegativeValue
-		}
-		return nil
-	case SaiyaTxType:
-		return t.SaiyaTx.isValid()
+	case EthTxType:
+		return t.EthTx.IsValid()
+	case SaiTxType:
+		return t.SaiTx.isValid()
 	default:
 		return ErrInvalidTxType
 	}

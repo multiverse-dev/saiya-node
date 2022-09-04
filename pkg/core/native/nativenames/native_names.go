@@ -3,7 +3,7 @@ package nativenames
 const (
 	Management  = "ContractManagement"
 	Ledger      = "LedgerContract"
-	SAI         = "SAIYAToken"
+	Sai         = "SaiToken"
 	Policy      = "PolicyContract"
 	Designation = "RoleManagement"
 )
@@ -12,7 +12,7 @@ const (
 func IsValid(name string) bool {
 	return name == Management ||
 		name == Ledger ||
-		name == SAI ||
+		name == Sai ||
 		name == Policy ||
 		name == Designation
 }

@@ -18,7 +18,7 @@ var (
 	ErrNoSender = errors.New("no sender in trimmed tx")
 )
 
-type SaiyaTx struct {
+type SaiTx struct {
 	Nonce    uint64
 	GasPrice *big.Int
 	Gas      uint64
@@ -40,15 +40,15 @@ type SaiyaTx struct {
 
 // New returns a new transaction to execute given script and pay given system
 // fee.
-func New(data []byte, gas uint64) *SaiyaTx {
-	return &SaiyaTx{
+func New(data []byte, gas uint64) *SaiTx {
+	return &SaiTx{
 		Nonce: rand.Uint64(),
 		Data:  data,
 	}
 }
 
-func NewSaiyaTxFromBytes(b []byte) (*SaiyaTx, error) {
-	tx := &SaiyaTx{}
+func NewSaiTxFromBytes(b []byte) (*SaiTx, error) {
+	tx := &SaiTx{}
 	err := io.FromByteArray(tx, b)
 	if err != nil {
 		return nil, err
@@ -57,7 +57,7 @@ func NewSaiyaTxFromBytes(b []byte) (*SaiyaTx, error) {
 }
 
 // Hash returns the hash of the transaction.
-func (t *SaiyaTx) Hash() common.Hash {
+func (t *SaiTx) Hash() common.Hash {
 	if !t.hashed {
 		if t.createHash() != nil {
 			panic("failed to compute hash!")
@@ -68,7 +68,7 @@ func (t *SaiyaTx) Hash() common.Hash {
 
 // decodeHashableFields decodes the fields that are used for signing the
 // transaction, which are all fields except the scripts.
-func (t *SaiyaTx) decodeHashableFields(br *io.BinReader, buf []byte) {
+func (t *SaiTx) decodeHashableFields(br *io.BinReader, buf []byte) {
 	var start, end int
 
 	if buf != nil {
@@ -99,7 +99,7 @@ func (t *SaiyaTx) decodeHashableFields(br *io.BinReader, buf []byte) {
 	}
 }
 
-func (t *SaiyaTx) decodeBinaryNoSize(br *io.BinReader, buf []byte) {
+func (t *SaiTx) decodeBinaryNoSize(br *io.BinReader, buf []byte) {
 	t.decodeHashableFields(br, buf)
 	if br.Err != nil {
 		return
@@ -114,7 +114,7 @@ func (t *SaiyaTx) decodeBinaryNoSize(br *io.BinReader, buf []byte) {
 }
 
 // DecodeBinary implements Serializable interface.
-func (t *SaiyaTx) DecodeBinary(br *io.BinReader) {
+func (t *SaiTx) DecodeBinary(br *io.BinReader) {
 	t.decodeBinaryNoSize(br, nil)
 
 	if br.Err == nil {
@@ -123,14 +123,14 @@ func (t *SaiyaTx) DecodeBinary(br *io.BinReader) {
 }
 
 // EncodeBinary implements Serializable interface.
-func (t *SaiyaTx) EncodeBinary(bw *io.BinWriter) {
+func (t *SaiTx) EncodeBinary(bw *io.BinWriter) {
 	t.encodeHashableFields(bw)
 	t.Witness.EncodeBinary(bw)
 }
 
 // encodeHashableFields encodes the fields that are not used for
 // signing the transaction, which are all fields except the scripts.
-func (t *SaiyaTx) encodeHashableFields(bw *io.BinWriter) {
+func (t *SaiTx) encodeHashableFields(bw *io.BinWriter) {
 	bw.WriteU64LE(t.Nonce)
 	if t.GasPrice == nil {
 		bw.WriteVarUint(0)
@@ -153,7 +153,7 @@ func (t *SaiyaTx) encodeHashableFields(bw *io.BinWriter) {
 }
 
 // EncodeHashableFields returns serialized transaction's fields which are hashed.
-func (t *SaiyaTx) EncodeHashableFields() ([]byte, error) {
+func (t *SaiTx) EncodeHashableFields() ([]byte, error) {
 	bw := io.NewBufBinWriter()
 	t.encodeHashableFields(bw.BinWriter)
 	if bw.Err != nil {
@@ -163,7 +163,7 @@ func (t *SaiyaTx) EncodeHashableFields() ([]byte, error) {
 }
 
 // createHash creates the hash of the transaction.
-func (t *SaiyaTx) createHash() error {
+func (t *SaiTx) createHash() error {
 	shaHash := sha3.NewLegacyKeccak256()
 	bw := io.NewBinWriterFromIO(shaHash)
 	t.encodeHashableFields(bw)
@@ -177,7 +177,7 @@ func (t *SaiyaTx) createHash() error {
 }
 
 // DecodeHashableFields decodes a part of transaction which should be hashed.
-func (t *SaiyaTx) DecodeHashableFields(buf []byte) error {
+func (t *SaiTx) DecodeHashableFields(buf []byte) error {
 	r := io.NewBinReaderFromBuf(buf)
 	t.decodeHashableFields(r, buf)
 	if r.Err != nil {
@@ -191,7 +191,7 @@ func (t *SaiyaTx) DecodeHashableFields(buf []byte) error {
 }
 
 // Bytes converts the transaction to []byte.
-func (t *SaiyaTx) Bytes() ([]byte, error) {
+func (t *SaiTx) Bytes() ([]byte, error) {
 	buf := io.NewBufBinWriter()
 	t.EncodeBinary(buf.BinWriter)
 	if buf.Err != nil {
@@ -201,16 +201,16 @@ func (t *SaiyaTx) Bytes() ([]byte, error) {
 }
 
 // Size returns size of the serialized transaction.
-func (t *SaiyaTx) Size() int {
+func (t *SaiTx) Size() int {
 	if t.len == 0 {
 		t.len = io.GetVarSize(t)
 	}
 	return t.len
 }
 
-// transactionJSON is a wrapper for SaiyaTx and
+// transactionJSON is a wrapper for SaiTx and
 // used for correct marhalling of transaction.Data.
-type saiyaTxJson struct {
+type SaiTxJson struct {
 	TxID     common.Hash     `json:"hash"`
 	Size     hexutil.Uint    `json:"size"`
 	Nonce    hexutil.Uint64  `json:"nonce"`
@@ -224,8 +224,8 @@ type saiyaTxJson struct {
 }
 
 // MarshalJSON implements json.Marshaler interface.
-func (t *SaiyaTx) MarshalJSON() ([]byte, error) {
-	tx := saiyaTxJson{
+func (t SaiTx) MarshalJSON() ([]byte, error) {
+	tx := SaiTxJson{
 		TxID:     t.Hash(),
 		Size:     hexutil.Uint(t.Size()),
 		Nonce:    hexutil.Uint64(t.Nonce),
@@ -241,8 +241,8 @@ func (t *SaiyaTx) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements json.Unmarshaler interface.
-func (t *SaiyaTx) UnmarshalJSON(data []byte) error {
-	tx := new(saiyaTxJson)
+func (t *SaiTx) UnmarshalJSON(data []byte) error {
+	tx := new(SaiTxJson)
 	if err := json.Unmarshal(data, tx); err != nil {
 		return err
 	}
@@ -259,14 +259,24 @@ func (t *SaiyaTx) UnmarshalJSON(data []byte) error {
 
 // Various errors for transaction validation.
 var (
-	ErrNegativeValue  = errors.New("negative value")
-	ErrWitnessUnmatch = errors.New("witness not match from")
+	ErrNegativeValue   = errors.New("negative value")
+	ErrZeroFromAddress = errors.New("zero from address")
+	ErrWitnessUnmatch  = errors.New("witness not match from")
 )
 
 // isValid checks whether decoded/unmarshalled transaction has all fields valid.
-func (t *SaiyaTx) isValid() error {
-	if t.Value.Sign() < 0 {
+func (t *SaiTx) isValid() error {
+	if t.Value.Sign() < 0 || t.GasPrice.Sign() < 0 {
 		return ErrNegativeValue
+	}
+	if t.Value.BitLen() > 256 {
+		return ErrValueVeryHigh
+	}
+	if t.GasPrice.BitLen() > 256 {
+		return ErrGasPriceVeryHigh
+	}
+	if t.From == (common.Address{}) {
+		return ErrZeroFromAddress
 	}
 	return nil
 }

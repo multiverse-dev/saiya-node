@@ -319,10 +319,7 @@ func restoreDB(ctx *cli.Context) error {
 		}
 	}
 
-	var skip uint32
-	if chain.BlockHeight() != 0 {
-		skip = chain.BlockHeight() + 1 - start
-	}
+	skip := chain.BlockHeight() + 1 - start
 
 	var allBlocks = reader.ReadU32LE()
 	if reader.Err != nil {
@@ -539,11 +536,11 @@ func initBlockChain(cfg config.Config, log *zap.Logger) (*core.Blockchain, error
 
 func Logo() string {
 	return `
-      _____ _  __    __     ___
-     / ____/ \ \ \   \ \   / / \
-     \ \  / _ \ \ \   \ \_/ / _ \
-      \ \/ /_\ \ \ \   \   / /_\ \
-  ____/ /  ___  \ \ \   / /  ___  \
- /_____/_/     \_\ \_\ /_/_/     \_\
+	_____ _  __    __     ___
+	/ ____/ \ \ \   \ \   / / \
+	\ \  / _ \ \ \   \ \_/ / _ \
+	 \ \/ /_\ \ \ \   \   / /_\ \
+ ____/ /  ___  \ \ \   / /  ___  \
+/_____/_/     \_\ \_\ /_/_/     \_\
 `
 }

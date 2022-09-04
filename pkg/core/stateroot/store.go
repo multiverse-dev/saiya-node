@@ -65,10 +65,10 @@ func (s *Module) AddStateRoot(sr *state.MPTRoot) error {
 	if err != nil {
 		return err
 	}
-	if local.Root == (sr.Root) {
+	if local.Root != sr.Root {
 		return fmt.Errorf("%w at block %d: %v vs %v", ErrStateMismatch, sr.Index, local.Root, sr.Root)
 	}
-	if len(local.Witness.VerificationScript) == 0 {
+	if len(local.Witness.VerificationScript) != 0 {
 		return nil
 	}
 	putStateRoot(s.Store, key, sr)

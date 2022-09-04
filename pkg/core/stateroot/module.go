@@ -21,7 +21,7 @@ import (
 
 type (
 	// VerifierFunc is a function that allows to check witness of account
-	// for Hashable item with SAI limit.
+	// for Hashable item with Sai limit.
 	VerifierFunc func(common.Address, hash.Hashable, *transaction.Witness) error
 	// Module represents module for local processing of state roots.
 	Module struct {
@@ -240,7 +240,7 @@ func (s *Module) VerifyStateRoot(r *state.MPTRoot) error {
 	return s.verifyWitness(r)
 }
 
-const maxVerificationSAI = 2_00000000
+const maxVerificationSai = 2_00000000
 
 // verifyWitness verifies state root witness.
 func (s *Module) verifyWitness(r *state.MPTRoot) error {

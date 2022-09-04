@@ -2,13 +2,11 @@ package native
 
 import (
 	"fmt"
-	"math/big"
 	"strconv"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/multiverse-dev/saiya/cli/options"
 	"github.com/multiverse-dev/saiya/cli/wallet"
-	"github.com/multiverse-dev/saiya/pkg/core/native"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
 	"github.com/urfave/cli"
 )
@@ -43,14 +41,14 @@ func newPolicyCommands() []cli.Command {
 			ArgsUsage: "<address>",
 			Subcommands: []cli.Command{
 				{
-					Name:      "feePerByte",
+					Name:      "feeperbyte",
 					Usage:     "set FeePerByte of tx",
 					ArgsUsage: "<number>",
 					Action:    setFeePerByte,
 					Flags:     flags,
 				},
 				{
-					Name:      "gasPrice",
+					Name:      "gasprice",
 					Usage:     "set GasPrice of tx",
 					ArgsUsage: "<number>",
 					Action:    setGasPrice,
@@ -86,7 +84,7 @@ func blockAccount(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, "blockAccount", address)
+	return callNative(ctx, nativenames.Policy, "blockAccount", address)
 }
 
 func unblockAccount(ctx *cli.Context) error {
@@ -94,7 +92,7 @@ func unblockAccount(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, "unblockAccount", address)
+	return callNative(ctx, nativenames.Policy, "unblockAccount", address)
 }
 
 func setFeePerByte(ctx *cli.Context) error {
@@ -102,15 +100,15 @@ func setFeePerByte(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, "setFeePerByte", value)
+	return callNative(ctx, nativenames.Policy, "setFeePerByte", value)
 }
 
 func setGasPrice(ctx *cli.Context) error {
-	value, err := parseBigInput(ctx)
+	value, err := parseUint64Input(ctx)
 	if err != nil {
 		return err
 	}
-	return callPolicy(ctx, "setGasPrice", value)
+	return callNative(ctx, nativenames.Policy, "setGasPrice", value)
 }
 
 func parseAddressInput(ctx *cli.Context) (common.Address, error) {
@@ -132,28 +130,4 @@ func parseUint64Input(ctx *cli.Context) (uint64, error) {
 		return 0, cli.NewExitError(fmt.Errorf("invalid number %s", num), 1)
 	}
 	return param, nil
-}
-
-func parseBigInput(ctx *cli.Context) ([]byte, error) {
-	if len(ctx.Args()) < 1 {
-		return nil, cli.NewExitError(fmt.Errorf("please input address"), 1)
-	}
-	num := ctx.Args().First()
-	param, ok := big.NewInt(0).SetString(num, 10)
-	if !ok {
-		return nil, cli.NewExitError(fmt.Errorf("invalid number %s", num), 1)
-	}
-	return param.Bytes(), nil
-}
-
-func callPolicy(ctx *cli.Context, method string, args ...interface{}) error {
-	pabi, err := getNativeContract(ctx, nativenames.Policy)
-	if err != nil {
-		return err
-	}
-	data, err := pabi.Pack(method, args...)
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("can't pack inputs for %s: %w", method, err), 1)
-	}
-	return makeCommitteeTx(ctx, native.PolicyAddress, data)
 }

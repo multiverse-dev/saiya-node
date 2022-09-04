@@ -1,7 +1,7 @@
 ProtocolConfiguration:
   ChainID: 153
   MaxTraceableBlocks: 2102400
-  InitialSAIYASupply: 100000000
+  InitialSaiSupply: 100000000
   KeepOnlyLatestState: false
   MaxBlockSize: 262144
   MaxBlockGas: 900000000000
@@ -12,7 +12,7 @@ ProtocolConfiguration:
   StandbyCommittee:
     - 027c2f67a9fe80b92f61595e97349bdd6899f1231e243a38d664d198727a9db6ec
   SeedList:
-    - 118.31.251.213:20303
+    - 118.31.251.213:20333
   VerifyBlocks: true
   VerifyTransactions: false
 
@@ -27,7 +27,7 @@ ApplicationConfiguration:
   #      FilePath: "./chains/testnet.bolt"
   #  Uncomment in order to set up custom address for node.
   #  Address: 127.0.0.1
-  NodePort: 20303
+  NodePort: 20333
   Relay: true
   DialTimeout: 3
   ProtoTickInterval: 2
@@ -39,11 +39,16 @@ ApplicationConfiguration:
   UnlockWallet:
     Path: "wallet.json"
     Password: "pass"
+  StateRoot:
+    Enabled: false
+    UnlockWallet:
+      Path: ""
+      Password: ""
   RPC:
     Enabled: true
     MaxGasInvoke: 15
     EnableCORSWorkaround: false
-    Port: 20302
+    Port: 20332
     TLSConfig:
       Enabled: false
       Port: 20301

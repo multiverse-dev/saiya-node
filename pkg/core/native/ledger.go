@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	prefixNonce        = 0x01
+	prefixNonce = 0x01
 )
 
 var (

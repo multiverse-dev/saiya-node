@@ -35,7 +35,7 @@ type (
 
 		// Port is the actual node port it is bound to. Example: 20332.
 		Port uint16
-		
+
 		ChainID uint64
 
 		// Relay determines whether the server is forwarding its inventory.

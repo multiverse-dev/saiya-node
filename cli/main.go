@@ -25,7 +25,7 @@ func newApp() *cli.App {
 	ctl := cli.NewApp()
 	ctl.Name = "saiya"
 	ctl.Version = config.Version
-	ctl.Usage = "Official Go client for multiverse"
+	ctl.Usage = "Official Go client for saiya"
 	ctl.ErrWriter = os.Stdout
 
 	ctl.Commands = append(ctl.Commands, server.NewCommands()...)

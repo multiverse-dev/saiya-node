@@ -3,10 +3,13 @@ package native
 import (
 	"encoding/binary"
 	"errors"
+	"math"
 	"sort"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"github.com/multiverse-dev/saiya/pkg/core/dao"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativeids"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
@@ -29,6 +32,20 @@ type Designate struct {
 	state.NativeContract
 	StandbyCommittee keys.PublicKeys
 	ValidatorsCount  int
+	cache            *DesignationCache
+}
+
+type roleData struct {
+	nodes  keys.PublicKeys
+	addr   common.Address
+	height uint32
+}
+
+type DesignationCache struct {
+	mutex            sync.Mutex
+	rolesChangedFlag bool
+	committee        roleData
+	stateVals        roleData
 }
 
 func NewDesignate(cfg config.ProtocolConfiguration) *Designate {
@@ -49,6 +66,7 @@ func NewDesignate(cfg config.ProtocolConfiguration) *Designate {
 		},
 		StandbyCommittee: standbyCommittee,
 		ValidatorsCount:  cfg.ValidatorsCount,
+		cache:            &DesignationCache{},
 	}
 	designateAbi, contractCalls, err := constructAbi(d)
 	if err != nil {
@@ -57,6 +75,61 @@ func NewDesignate(cfg config.ProtocolConfiguration) *Designate {
 	d.Abi = *designateAbi
 	d.ContractCalls = contractCalls
 	return d
+}
+
+func (d *Designate) UpdateCache(s *dao.Simple) error {
+	err := d.updateCachedRoleData(d.cache, s, noderoles.Committee)
+	if err != nil {
+		return err
+	}
+	return d.updateCachedRoleData(d.cache, s, noderoles.StateValidator)
+}
+
+func (d *Designate) PostPersist(s *dao.Simple, _ *block.Block) error {
+	return d.UpdateCache(s)
+}
+
+func (d *Designate) updateCachedRoleData(cache *DesignationCache, s *dao.Simple, r noderoles.Role) error {
+	d.cache.mutex.Lock()
+	defer d.cache.mutex.Unlock()
+	var v *roleData
+	switch r {
+	case noderoles.StateValidator:
+		v = &cache.stateVals
+	case noderoles.Committee:
+		v = &cache.committee
+	}
+	nodeKeys, height, err := d.GetDesignatedByRoleFromStorage(s, r, math.MaxUint32)
+	if err != nil {
+		return err
+	}
+	v.nodes = nodeKeys
+	addr, err := addressFromNodes(r, nodeKeys)
+	if err != nil {
+		return err
+	}
+	v.addr = addr
+	v.height = height
+	cache.rolesChangedFlag = true
+	return nil
+}
+
+func addressFromNodes(r noderoles.Role, nodes keys.PublicKeys) (common.Address, error) {
+	switch r {
+	case noderoles.Committee:
+		return createCommitteeAddress(nodes)
+	case noderoles.StateValidator:
+		if nodes.Len() == 0 {
+			return common.Address{}, nil
+		}
+		script, err := nodes.CreateDefaultMultiSigRedeemScript()
+		if err != nil {
+			return common.Address{}, err
+		}
+		return hash.Hash160(script), nil
+	default:
+		return common.Address{}, errors.New("invalid role")
+	}
 }
 
 func (d *Designate) ContractCall_initialize(ic InteropContext) error {
@@ -137,17 +210,36 @@ func createRoleKey(role noderoles.Role, index uint32) []byte {
 	return key
 }
 
-func (d *Designate) GetDesignatedByRole(s *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, error) {
+func (d *Designate) GetDesignatedByRole(s *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, uint32, error) {
 	if !noderoles.IsValid(r) {
-		return nil, ErrInvalidRole
+		return nil, 0, ErrInvalidRole
 	}
+	d.cache.mutex.Lock()
+	defer d.cache.mutex.Unlock()
+	var val roleData
+	switch r {
+	case noderoles.Committee:
+		val = d.cache.committee
+	case noderoles.StateValidator:
+		val = d.cache.stateVals
+	default:
+		return nil, 0, ErrInvalidRole
+	}
+	if val.height <= index {
+		return val.nodes.Copy(), val.height, nil
+	}
+	return d.GetDesignatedByRoleFromStorage(s, r, index)
+}
+
+func (d *Designate) GetDesignatedByRoleFromStorage(s *dao.Simple, r noderoles.Role, index uint32) (keys.PublicKeys, uint32, error) {
 	kvs, err := s.GetStorageItemsWithPrefix(d.Address, []byte{byte(r)})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var (
-		ks    = keys.PublicKeys{}
-		resSi state.StorageItem
+		ks     = keys.PublicKeys{}
+		resSi  state.StorageItem
+		height uint32
 	)
 	for i := len(kvs) - 1; i >= 0; i-- {
 		kv := kvs[i]
@@ -156,6 +248,7 @@ func (d *Designate) GetDesignatedByRole(s *dao.Simple, r noderoles.Role, index u
 		}
 		siInd := binary.BigEndian.Uint32(kv.Key)
 		if siInd <= index {
+			height = siInd
 			resSi = kv.Item
 			break
 		}
@@ -163,10 +256,10 @@ func (d *Designate) GetDesignatedByRole(s *dao.Simple, r noderoles.Role, index u
 	if resSi != nil {
 		err := ks.DecodeBytes(resSi)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
-	return ks, nil
+	return ks, height, nil
 }
 
 func createCommitteeAddress(keys keys.PublicKeys) (common.Address, error) {
@@ -184,7 +277,8 @@ func createCommitteeAddress(keys keys.PublicKeys) (common.Address, error) {
 }
 
 func (d *Designate) GetCommitteeMembers(s *dao.Simple, index uint32) (keys.PublicKeys, error) {
-	return d.GetDesignatedByRole(s, noderoles.Committee, index)
+	nodes, _, err := d.GetDesignatedByRole(s, noderoles.Committee, index)
+	return nodes, err
 }
 
 func (d *Designate) GetCommitteeAddress(s *dao.Simple, index uint32) (common.Address, error) {

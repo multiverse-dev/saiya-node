@@ -6,26 +6,26 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"github.com/multiverse-dev/saiya/pkg/core/dao"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativeids"
 	"github.com/multiverse-dev/saiya/pkg/core/native/nativenames"
 	"github.com/multiverse-dev/saiya/pkg/core/state"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
-	"github.com/multiverse-dev/saiya/pkg/dbft/block"
 	"github.com/multiverse-dev/saiya/pkg/io"
 )
 
 const (
 	prefixAccount = 20
-	SAIDecimal    = 18
+	SaiDecimal    = 18
 )
 
 var (
-	SAIAddress     common.Address = common.Address(common.BytesToAddress([]byte{nativeids.SAI}))
+	SaiAddress     common.Address = common.Address(common.BytesToAddress([]byte{nativeids.Sai}))
 	totalSupplyKey                = []byte{11}
 )
 
-type SAI struct {
+type Sai struct {
 	state.NativeContract
 	cs            *Contracts
 	symbol        string
@@ -33,22 +33,22 @@ type SAI struct {
 	initialSupply uint64
 }
 
-func NewSAI(cs *Contracts, init uint64) *SAI {
-	g := &SAI{
+func NewSai(cs *Contracts, init uint64) *Sai {
+	g := &Sai{
 		NativeContract: state.NativeContract{
-			Name: nativenames.SAI,
+			Name: nativenames.Sai,
 			Contract: state.Contract{
-				Address:  SAIAddress,
-				CodeHash: hash.Keccak256(SAIAddress[:]),
-				Code:     SAIAddress[:],
+				Address:  SaiAddress,
+				CodeHash: hash.Keccak256(SaiAddress[:]),
+				Code:     SaiAddress[:],
 			},
 		},
 		cs:            cs,
 		initialSupply: init,
 	}
 
-	g.symbol = "SAI"
-	g.decimals = SAIDecimal
+	g.symbol = "Sai"
+	g.decimals = SaiDecimal
 	gasAbi, contractCalls, err := constructAbi(g)
 	if err != nil {
 		panic(err)
@@ -62,15 +62,11 @@ func makeAccountKey(h common.Address) []byte {
 	return makeAddressKey(prefixAccount, h)
 }
 
-func (g *SAI) ContractCall_initialize(ic InteropContext) error {
+func (g *Sai) ContractCall_initialize(ic InteropContext) error {
 	if ic.PersistingBlock() == nil || ic.PersistingBlock().Index != 0 {
 		return ErrInitialize
 	}
-	validators, err := g.cs.Designate.GetValidators(ic.Dao(), 0)
-	if err != nil {
-		return err
-	}
-	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(SAIDecimal), nil)
+	validators := g.cs.Designate.StandbyCommittee[:g.cs.Designate.ValidatorsCount]
 	var addr common.Address
 	if validators.Len() == 1 {
 		addr = validators[0].Address()
@@ -81,19 +77,20 @@ func (g *SAI) ContractCall_initialize(ic InteropContext) error {
 		}
 		addr = hash.Hash160(script)
 	}
+	wei := big.NewInt(1).Exp(big.NewInt(10), big.NewInt(SaiDecimal), nil)
 	total := big.NewInt(1).Mul(big.NewInt(int64(g.initialSupply)), wei)
-	err = g.addTokens(ic.Dao(), addr, total)
+	err := g.addTokens(ic.Dao(), addr, total)
 	if err == nil {
 		log(ic, g.Address, total.Bytes(), g.Abi.Events["initialize"].ID)
 	}
 	return err
 }
 
-func (g *SAI) OnPersist(d *dao.Simple, block *block.Block) {
-
+func (g *Sai) OnPersist(d *dao.Simple, block *block.Block) error {
+	return nil
 }
 
-func (g *SAI) increaseBalance(gs *GasState, amount *big.Int) error {
+func (g *Sai) increaseBalance(gs *GasState, amount *big.Int) error {
 	if amount.Sign() == -1 && gs.Balance.CmpAbs(amount) == -1 {
 		return errors.New("insufficient funds")
 	}
@@ -101,20 +98,19 @@ func (g *SAI) increaseBalance(gs *GasState, amount *big.Int) error {
 	return nil
 }
 
-func (g *SAI) getTotalSupply(d *dao.Simple) *big.Int {
+func (g *Sai) getTotalSupply(d *dao.Simple) *big.Int {
 	si := d.GetStorageItem(g.Address, totalSupplyKey)
-
 	if si == nil {
 		return nil
 	}
 	return big.NewInt(0).SetBytes(si)
 }
 
-func (g *SAI) saveTotalSupply(d *dao.Simple, supply *big.Int) {
+func (g *Sai) saveTotalSupply(d *dao.Simple, supply *big.Int) {
 	d.PutStorageItem(g.Address, totalSupplyKey, supply.Bytes())
 }
 
-func (g *SAI) getGasState(d *dao.Simple, key []byte) (*GasState, error) {
+func (g *Sai) getGasState(d *dao.Simple, key []byte) (*GasState, error) {
 	si := d.GetStorageItem(g.Address, key)
 	if si == nil {
 		return nil, nil
@@ -127,7 +123,7 @@ func (g *SAI) getGasState(d *dao.Simple, key []byte) (*GasState, error) {
 	return gs, nil
 }
 
-func (g *SAI) putGasState(d *dao.Simple, key []byte, gs *GasState) error {
+func (g *Sai) putGasState(d *dao.Simple, key []byte, gs *GasState) error {
 	data, err := io.ToByteArray(gs)
 	if err != nil {
 		return err
@@ -136,7 +132,7 @@ func (g *SAI) putGasState(d *dao.Simple, key []byte, gs *GasState) error {
 	return nil
 }
 
-func (g *SAI) addTokens(d *dao.Simple, h common.Address, amount *big.Int) error {
+func (g *Sai) addTokens(d *dao.Simple, h common.Address, amount *big.Int) error {
 	if amount.Sign() == 0 {
 		return nil
 	}
@@ -171,17 +167,17 @@ func (g *SAI) addTokens(d *dao.Simple, h common.Address, amount *big.Int) error 
 	return nil
 }
 
-func (g *SAI) AddBalance(d *dao.Simple, h common.Address, amount *big.Int) {
+func (g *Sai) AddBalance(d *dao.Simple, h common.Address, amount *big.Int) {
 	g.addTokens(d, h, amount)
 }
 
-func (g *SAI) SubBalance(d *dao.Simple, h common.Address, amount *big.Int) {
+func (g *Sai) SubBalance(d *dao.Simple, h common.Address, amount *big.Int) {
 	neg := big.NewInt(0)
 	neg.Neg(amount)
 	g.addTokens(d, h, neg)
 }
 
-func (g *SAI) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
+func (g *Sai) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
 	acc := new(GasState)
 	err := io.FromByteArray(acc, *si)
 	if err != nil {
@@ -190,7 +186,7 @@ func (g *SAI) balanceFromBytes(si *state.StorageItem) (*big.Int, error) {
 	return acc.Balance, err
 }
 
-func (g *SAI) GetBalance(d *dao.Simple, h common.Address) *big.Int {
+func (g *Sai) GetBalance(d *dao.Simple, h common.Address) *big.Int {
 	key := makeAccountKey(h)
 	si := d.GetStorageItem(g.Address, key)
 	if si == nil {
@@ -203,7 +199,7 @@ func (g *SAI) GetBalance(d *dao.Simple, h common.Address) *big.Int {
 	return balance
 }
 
-func (g *SAI) RequiredGas(ic InteropContext, input []byte) uint64 {
+func (g *Sai) RequiredGas(ic InteropContext, input []byte) uint64 {
 	if len(input) < 4 {
 		return 0
 	}
@@ -219,7 +215,7 @@ func (g *SAI) RequiredGas(ic InteropContext, input []byte) uint64 {
 	}
 }
 
-func (g *SAI) Run(ic InteropContext, input []byte) ([]byte, error) {
+func (g *Sai) Run(ic InteropContext, input []byte) ([]byte, error) {
 	return contractCall(g, &g.NativeContract, ic, input)
 }
 

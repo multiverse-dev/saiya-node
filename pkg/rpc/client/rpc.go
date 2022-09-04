@@ -28,7 +28,7 @@ func (c *Client) IsBlocked(address common.Address) (bool, error) {
 	return resp, nil
 }
 
-func (c *Client) CalculateGas(tx *transaction.SaiyaTx) (uint64, error) {
+func (c *Client) CalculateGas(tx *transaction.SaiTx) (uint64, error) {
 	b, err := tx.Bytes()
 	if err != nil {
 		return 0, err
@@ -535,18 +535,6 @@ func (c *Client) GetTransactionHeight(hash common.Hash) (uint32, error) {
 		resp   uint32
 	)
 	if err := c.performRequest("gettransactionheight", params, &resp); err != nil {
-		return resp, err
-	}
-	return resp, nil
-}
-
-// GetUnclaimedGas returns unclaimed SAI amount for the specified address.
-func (c *Client) GetUnclaimedGas(address string) (result.UnclaimedGas, error) {
-	var (
-		params = request.NewRawParams(address)
-		resp   result.UnclaimedGas
-	)
-	if err := c.performRequest("getunclaimedgas", params, &resp); err != nil {
 		return resp, err
 	}
 	return resp, nil

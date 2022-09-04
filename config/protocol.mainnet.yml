@@ -1,7 +1,7 @@
 ProtocolConfiguration:
   ChainID: 53
   MaxTraceableBlocks: 2102400
-  InitialSAIYASupply: 52000000
+  InitialSaiSupply: 52000000
   KeepOnlyLatestState: false
   MaxBlockSize: 262144
   MaxBlockGas: 90000000000
@@ -12,7 +12,7 @@ ProtocolConfiguration:
   StandbyCommittee:
     - 027c2f67a9fe80b92f61595e97349bdd6899f1231e243a38d664d198727a9db6ec
   SeedList:
-    - seed1.multiversehub.org:10303
+    - 118.31.251.213:10333
   VerifyBlocks: true
   VerifyTransactions: false
 
@@ -27,7 +27,7 @@ ApplicationConfiguration:
   #      FilePath: "./chains/mainnet.bolt"
   #  Uncomment in order to set up custom address for node.
   #  Address: 127.0.0.1
-  NodePort: 10303
+  NodePort: 10333
   Relay: true
   DialTimeout: 3
   ProtoTickInterval: 2
@@ -37,13 +37,18 @@ ApplicationConfiguration:
   AttemptConnPeers: 10
   MinPeers: 1
   UnlockWallet:
-    Path: "wallet.json"
-    Password: "pass"
+    Path: ""
+    Password: ""
+  StateRoot:
+    Enabled: false
+    UnlockWallet:
+      Path: ""
+      Password: ""
   RPC:
     Enabled: true
     MaxGasInvoke: 15
     EnableCORSWorkaround: false
-    Port: 10302
+    Port: 10332
     TLSConfig:
       Enabled: false
       Port: 10301

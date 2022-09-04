@@ -97,7 +97,7 @@ func (s *service) sendValidatedRoot(r *state.MPTRoot, acc *wallet.Account) {
 		Category:        Category,
 		ValidBlockStart: r.Index,
 		ValidBlockEnd:   r.Index + rootValidEndInc,
-		Sender:          priv.GetScriptHash(),
+		Sender:          priv.PublicKey().Address(),
 		Data:            w.Bytes(),
 		Witness: transaction.Witness{
 			VerificationScript: acc.PrivateKey().PublicKey().CreateVerificationScript(),

@@ -45,7 +45,7 @@ func TestOneMultiAddress(t *testing.T) {
 	script, err := ks.CreateDefaultMultiSigRedeemScript()
 	assert.NoError(t, err)
 	t.Log(hash.Hash160(script))
-	
+
 	k, err = keys.NewPublicKeyFromString("03092c7fc564d67a2c589a4229c54f19358629529bc191daf1642d0a95989e3a83")
 	assert.NoError(t, err)
 	ks = keys.PublicKeys{k}

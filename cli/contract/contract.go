@@ -12,13 +12,10 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/multiverse-dev/saiya/cli/flags"
 	"github.com/multiverse-dev/saiya/cli/input"
 	"github.com/multiverse-dev/saiya/cli/options"
 	"github.com/multiverse-dev/saiya/cli/wallet"
-	"github.com/multiverse-dev/saiya/pkg/core/transaction"
 	"github.com/multiverse-dev/saiya/pkg/rpc/response/result"
 	corew "github.com/multiverse-dev/saiya/pkg/wallet"
 	"github.com/urfave/cli"
@@ -27,7 +24,8 @@ import (
 func NewCommands() []cli.Command {
 	return []cli.Command{
 		{
-			Name: "contract",
+			Name:        "contract",
+			Description: "contract operations",
 			Subcommands: []cli.Command{
 				{
 					Name:   "call",
@@ -122,7 +120,7 @@ func call(ctx *cli.Context) error {
 	if err != nil {
 		return cli.NewExitError(err, 1)
 	}
-	return MakeEthTx(ctx, facc, &address, data)
+	return wallet.MakeEthTx(ctx, facc, &address, big.NewInt(0), data)
 }
 
 func deploy(ctx *cli.Context) error {
@@ -174,7 +172,7 @@ func deploy(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return MakeEthTx(ctx, facc, nil, data)
+	return wallet.MakeEthTx(ctx, facc, nil, big.NewInt(0), data)
 }
 
 func parseParam(pstr string) (interface{}, error) {
@@ -246,58 +244,4 @@ func handleWalletAndFrom(ctx *cli.Context) (*corew.Account, error) {
 		return nil, cli.NewExitError(fmt.Errorf("unable to decrypt account: %s", facc.Address), 1)
 	}
 	return facc, nil
-}
-
-func MakeEthTx(ctx *cli.Context, facc *corew.Account, to *common.Address, data []byte) error {
-	var err error
-	gctx, cancel := options.GetTimeoutContext(ctx)
-	defer cancel()
-	c, err := options.GetRPCClient(gctx, ctx)
-	if err != nil {
-		return cli.NewExitError(err, 1)
-	}
-	chainId, err := c.Eth_ChainId()
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("failed to get chainId: %w", err), 1)
-	}
-	gasPrice, err := c.Eth_GasPrice()
-	if err != nil {
-		return cli.NewExitError(err, 1)
-	}
-	nonce, err := c.Eth_GetTransactionCount(facc.Address)
-	if err != nil {
-		return err
-	}
-	tx := &types.LegacyTx{
-		Nonce:    nonce,
-		To:       to,
-		GasPrice: gasPrice,
-		Value:    big.NewInt(0),
-		Data:     data,
-	}
-	gas, err := c.Eth_EstimateGas(&result.TransactionObject{
-		From:     facc.Address,
-		To:       tx.To,
-		GasPrice: tx.GasPrice,
-		Value:    tx.Value,
-		Data:     tx.Data,
-	})
-	if err != nil {
-		return err
-	}
-	tx.Gas = gas
-	err = facc.SignTx(chainId, transaction.NewTx(tx))
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("can't sign tx: %w", err), 1)
-	}
-	b, err := rlp.EncodeToBytes(tx)
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("failed encode tx to bytes: %w", err), 1)
-	}
-	hash, err := c.Eth_SendRawTransaction(b)
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("failed relay tx: %w", err), 1)
-	}
-	fmt.Fprintf(ctx.App.Writer, "TxHash: %s\n", hash)
-	return nil
 }

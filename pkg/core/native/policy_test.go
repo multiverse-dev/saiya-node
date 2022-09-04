@@ -43,7 +43,7 @@ func TestSetGasPrice(t *testing.T) {
 	_, err = p.Run(ic, input)
 	assert.NoError(t, err)
 
-	gasPrice := p.GetGasPriceInternal(dao)
+	gasPrice := p.GetGasPrice(dao)
 	assert.Equal(t, uint64(1), gasPrice.Uint64())
 }
 

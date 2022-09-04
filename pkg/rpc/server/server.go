@@ -566,7 +566,7 @@ func (s *Server) eth_blockNumber(_ request.Params) (interface{}, *response.Error
 	return hexutil.EncodeUint64(uint64(s.chain.BlockHeight())), nil
 }
 
-// We only return latest balance of SAIYA
+// We only return latest balance of Sai
 func (s *Server) eth_getBalance(params request.Params) (interface{}, *response.Error) {
 	param := params.Value(0)
 	if param == nil {
@@ -723,14 +723,18 @@ func (s *Server) eth_signTransaction(params request.Params) (interface{}, *respo
 	if acc == nil {
 		return nil, response.NewInternalServerError("Could not found account to sign tx", errors.New("account not found"))
 	}
-	inner := &types.LegacyTx{
+	ltx := &types.LegacyTx{
 		Nonce: s.chain.GetNonce(txObj.From) + 1,
 		To:    txObj.To,
 		Value: txObj.Value,
 		Data:  txObj.Data,
 	}
+	inner := &transaction.EthTx{
+		Transaction: *types.NewTx(ltx),
+		ChainID:     s.chainId,
+		Sender:      txObj.From,
+	}
 	tx := transaction.NewTx(inner)
-	tx.EthFrom = txObj.From
 	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
@@ -743,14 +747,14 @@ func (s *Server) eth_signTransaction(params request.Params) (interface{}, *respo
 	}
 	var left uint64
 	if inner.To == nil {
-		_, _, left, err = ic.VM.Create(ic, inner.Data, TestGas, inner.Value)
+		_, _, left, err = ic.VM.Create(ic, inner.Data(), TestGas, inner.Value())
 	} else {
 		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
 	}
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	inner.Gas = TestGas - left
+	ltx.Gas = TestGas - left
 	err = acc.SignTx(s.chainId, tx)
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not sign tx: %s", err), err)
@@ -777,15 +781,19 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 	if acc == nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not found accout to sign tx: %s", err), errors.New("account not found"))
 	}
-	inner := &types.LegacyTx{
+	ltx := &types.LegacyTx{
 		Nonce:    s.chain.GetNonce(txObj.From),
 		GasPrice: s.chain.GetGasPrice(),
 		To:       txObj.To,
 		Value:    txObj.Value,
 		Data:     txObj.Data,
 	}
+	inner := &transaction.EthTx{
+		Transaction: *types.NewTx(ltx),
+		ChainID:     s.chainId,
+		Sender:      txObj.From,
+	}
 	tx := transaction.NewTx(inner)
-	tx.EthFrom = txObj.From
 	fakeBlock, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
@@ -805,9 +813,9 @@ func (s *Server) eth_sendTransaction(params request.Params) (interface{}, *respo
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	inner.Gas = TestGas - left
+	ltx.Gas = TestGas - left
 	netfee := transaction.CalculateNetworkFee(tx, s.chain.FeePerByte())
-	inner.Gas += netfee
+	ltx.Gas += netfee
 	if err != nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not calculate network fee: %s", err), err)
 	}
@@ -826,14 +834,14 @@ func (s *Server) eth_sendRawTransaction(params request.Params) (interface{}, *re
 	if err != nil {
 		return nil, response.NewInvalidParamsError(fmt.Sprintf("invalid hex: %s", err), err)
 	}
-	bw := io.NewBufBinWriter()
-	bw.WriteB(transaction.EthLegacyTxType)
-	bw.Write(rawTx)
-	tx, err := transaction.NewTransactionFromBytes(bw.Bytes())
+	tx := new(types.Transaction)
+	tx.UnmarshalBinary(rawTx)
+	etx, err := transaction.NewEthTx(tx)
 	if err != nil {
-		return nil, response.NewInvalidParamsError(fmt.Sprintf("can't decode transaction: %s", err), err)
+		return nil, response.NewInvalidParamsError(fmt.Sprintf("can't parse eth transaction: %s", err), err)
 	}
-	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
+	t := transaction.NewTx(etx)
+	return getRelayResult(s.coreServer.RelayTxn(t), tx.Hash())
 }
 
 func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) {
@@ -847,7 +855,7 @@ func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) 
 	if err != nil {
 		return nil, response.ErrInvalidParams
 	}
-	inner := &types.LegacyTx{
+	ltx := &types.LegacyTx{
 		Nonce:    s.chain.GetNonce(txObj.From) + 1,
 		GasPrice: s.chain.GetGasPrice(),
 		Gas:      txObj.Gas,
@@ -855,8 +863,12 @@ func (s *Server) eth_call(params request.Params) (interface{}, *response.Error) 
 		Value:    txObj.Value,
 		Data:     txObj.Data,
 	}
+	inner := &transaction.EthTx{
+		Transaction: *types.NewTx(ltx),
+		ChainID:     s.chainId,
+		Sender:      txObj.From,
+	}
 	tx := transaction.NewTx(inner)
-	tx.EthFrom = txObj.From
 	block, err := s.chain.GetBlock(s.chain.CurrentBlockHash(), false)
 	if err != nil {
 		return nil, response.NewInternalServerError(fmt.Sprintf("Could not get current block: %s", err), err)
@@ -889,7 +901,7 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 	}
 	var tx *transaction.Transaction
 	if txObj.Witness == nil {
-		inner := &types.LegacyTx{
+		ltx := &types.LegacyTx{
 			Nonce:    s.chain.GetNonce(txObj.From) + 1,
 			GasPrice: s.chain.GetGasPrice(),
 			Gas:      txObj.Gas,
@@ -897,10 +909,14 @@ func (s *Server) eth_estimateGas(reqParams request.Params) (interface{}, *respon
 			Value:    txObj.Value,
 			Data:     txObj.Data,
 		}
+		inner := &transaction.EthTx{
+			Transaction: *types.NewTx(ltx),
+			ChainID:     s.chainId,
+			Sender:      txObj.From,
+		}
 		tx = transaction.NewTx(inner)
-		tx.EthFrom = txObj.From
 	} else {
-		inner := &transaction.SaiyaTx{
+		inner := &transaction.SaiTx{
 			Nonce:    s.chain.GetNonce(txObj.From) + 1,
 			From:     txObj.From,
 			GasPrice: s.chain.GetGasPrice(),
@@ -1249,7 +1265,7 @@ func (s *Server) getVersion(_ request.Params) (interface{}, *response.Error) {
 			MaxTransactionsPerBlock:   cfg.MaxTransactionsPerBlock,
 			MemoryPoolMaxTransactions: cfg.MemPoolSize,
 			ValidatorsCount:           byte(len(validators)),
-			InitialGasDistribution:    cfg.InitialSAISupply,
+			InitialGasDistribution:    cfg.InitialSaiSupply,
 		},
 	}, nil
 }
@@ -1300,14 +1316,14 @@ func (s *Server) calculateGas(reqParams request.Params) (interface{}, *response.
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	neoTx, err := transaction.NewSaiyaTxFromBytes(byteTx)
+	saiTx, err := transaction.NewSaiTxFromBytes(byteTx)
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, err)
 	}
-	if len(neoTx.Witness.VerificationScript) == 0 {
+	if len(saiTx.Witness.VerificationScript) == 0 {
 		return nil, response.NewInvalidParamsError("missing verification script", nil)
 	}
-	tx := transaction.NewTx(neoTx)
+	tx := transaction.NewTx(saiTx)
 	feePerByte := s.chain.GetFeePerByte()
 	netfee := transaction.CalculateNetworkFee(tx, feePerByte)
 	if err != nil {
@@ -1325,7 +1341,7 @@ func (s *Server) calculateGas(reqParams request.Params) (interface{}, *response.
 		}
 	}
 	var left uint64
-	if neoTx.To == nil {
+	if saiTx.To == nil {
 		_, _, left, err = ic.VM.Create(ic, tx.Data(), TestGas, tx.Value())
 	} else {
 		_, left, err = ic.VM.Call(ic, *tx.To(), tx.Data(), TestGas, tx.Value())
@@ -1333,12 +1349,12 @@ func (s *Server) calculateGas(reqParams request.Params) (interface{}, *response.
 	if err != nil {
 		return nil, response.NewInvalidRequestError(fmt.Sprintf("Could not executing data: %s", err), err)
 	}
-	neoTx.Gas = TestGas - left
-	neoTx.Gas += netfee + params.SstoreSentryGasEIP2200
+	saiTx.Gas = TestGas - left
+	saiTx.Gas += netfee + params.SstoreSentryGasEIP2200
 	if err != nil {
 		return 0, response.WrapErrorWithData(response.ErrInvalidParams, fmt.Errorf("failed to compute tx size: %w", err))
 	}
-	return result.NetworkFee{Value: neoTx.Gas}, nil
+	return result.NetworkFee{Value: saiTx.Gas}, nil
 }
 
 // getContractScriptHashFromParam returns the contract script hash by hex contract hash, address, id or native contract name.
@@ -1807,11 +1823,11 @@ func (s *Server) sendrawtransaction(reqParams request.Params) (interface{}, *res
 	if err != nil {
 		return nil, response.NewInvalidParamsError(err.Error(), err)
 	}
-	saiyaTx, err := transaction.NewSaiyaTxFromBytes(byteTx)
+	SaiTx, err := transaction.NewSaiTxFromBytes(byteTx)
 	if err != nil {
 		return nil, response.NewInvalidParamsError("can't decode transaction", err)
 	}
-	tx := transaction.NewTx(saiyaTx)
+	tx := transaction.NewTx(SaiTx)
 	return getRelayResult(s.coreServer.RelayTxn(tx), tx.Hash())
 }
 

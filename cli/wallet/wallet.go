@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/multiverse-dev/saiya/cli/flags"
 	"github.com/multiverse-dev/saiya/cli/input"
 	"github.com/multiverse-dev/saiya/cli/options"
@@ -19,6 +20,7 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/crypto"
 	"github.com/multiverse-dev/saiya/pkg/crypto/hash"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
+	"github.com/multiverse-dev/saiya/pkg/rpc/response/result"
 	"github.com/multiverse-dev/saiya/pkg/wallet"
 	"github.com/urfave/cli"
 )
@@ -108,15 +110,6 @@ func NewCommands() []cli.Command {
 				Action: addAccount,
 				Flags: []cli.Flag{
 					WalletPathFlag,
-				},
-			},
-			{
-				Name:   "dump",
-				Usage:  "check and dump an existing saiya wallet",
-				Action: dumpWallet,
-				Flags: []cli.Flag{
-					WalletPathFlag,
-					decryptFlag,
 				},
 			},
 			{
@@ -231,7 +224,7 @@ func listAddresses(ctx *cli.Context) error {
 		if err != nil {
 			return cli.NewExitError(fmt.Errorf("could not get balance of account %s, err: %w", acc.Address, err), 1)
 		}
-		fmt.Fprintf(ctx.App.Writer, "%s SAIYA: %s\n", acc.Address, bal)
+		fmt.Fprintf(ctx.App.Writer, "%s Sai: %s\n", acc.Address, bal)
 	}
 	return nil
 }
@@ -469,30 +462,6 @@ func askForConsent(w io.Writer) bool {
 	return false
 }
 
-func dumpWallet(ctx *cli.Context) error {
-	wall, err := ReadWallet(ctx.String("wallet"))
-	if err != nil {
-		return cli.NewExitError(err, 1)
-	}
-	if ctx.Bool("decrypt") {
-		pass, err := input.ReadPassword("Enter wallet password > ")
-		if err != nil {
-			return cli.NewExitError(fmt.Errorf("error reading password: %w", err), 1)
-		}
-		for i := range wall.Accounts {
-			// Just testing the decryption here.
-			if !wall.Accounts[i].IsMultiSig() {
-				err := wall.Accounts[i].Decrypt(pass, wall.Scrypt)
-				if err != nil {
-					return cli.NewExitError(err, 1)
-				}
-			}
-		}
-	}
-	fmtPrintWallet(ctx.App.Writer, wall)
-	return nil
-}
-
 func dumpKeys(ctx *cli.Context) error {
 	wall, err := ReadWallet(ctx.String("wallet"))
 	if err != nil {
@@ -504,7 +473,7 @@ func dumpKeys(ctx *cli.Context) error {
 	if addrFlag.IsSet {
 		acc := wall.GetAccount(addrFlag.Address())
 		if acc == nil {
-			return cli.NewExitError("account is missing", 1)
+			return cli.NewExitError("can't find address", 1)
 		}
 		accounts = []*wallet.Account{acc}
 	}
@@ -517,16 +486,13 @@ func dumpKeys(ctx *cli.Context) error {
 		if acc.IsMultiSig() {
 			fmt.Println("multiple signature contract:")
 			fmt.Fprintf(ctx.App.Writer, "address: %s \n", acc.Address)
-			fmt.Fprintf(ctx.App.Writer, "script: %s \n", hex.EncodeToString((acc.Script)[1:]))
+			fmt.Fprintf(ctx.App.Writer, "script: %s \n", hex.EncodeToString(acc.Script))
 		} else {
 			fmt.Println("simple signature contract:")
 			fmt.Fprintf(ctx.App.Writer, "address: %s \n", acc.Address)
 			fmt.Fprintf(ctx.App.Writer, "public key: %s \n", hex.EncodeToString((acc.Script)[1:]))
 		}
 		hasPrinted = true
-		if addrFlag.IsSet {
-			return cli.NewExitError(fmt.Errorf("unknown script type for address %s", addrFlag.Address()), 1)
-		}
 	}
 	return nil
 }
@@ -641,14 +607,14 @@ func sign(ctx *cli.Context) error {
 	defer wall.Close()
 
 	signContext := new(SignContext)
-	err = signContext.UnmarshalJSON([]byte(ctx.String("context")))
+	err = json.Unmarshal([]byte(ctx.String("context")), signContext)
 	if err != nil {
-		return cli.NewExitError("sign context invalid", 1)
+		return cli.NewExitError(fmt.Errorf("sign context invalid: %w", err), 1)
 	}
 
 	err = Sign(wall, signContext)
 	if err != nil {
-		return cli.NewExitError("sign context error", 1)
+		return cli.NewExitError(fmt.Errorf("sign context error: %w", err), 1)
 	}
 	var tx *transaction.Transaction
 	if signContext.IsComplete() {
@@ -679,7 +645,7 @@ func sign(ctx *cli.Context) error {
 	return nil
 }
 
-func MakeNeoTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to common.Address, value *big.Int, data []byte) error {
+func MakeSaiTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to common.Address, value *big.Int, data []byte) error {
 	var err error
 	var pks *keys.PublicKeys
 	var script []byte
@@ -711,13 +677,28 @@ func MakeNeoTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to co
 		if err != nil {
 			return cli.NewExitError(fmt.Errorf("failed get committee: %w", err), 1)
 		}
-		isMulti = true
-		pks = &committee
-		m = keys.GetMajorityHonestNodeCount(pks.Len())
-		script, err = committee.CreateMajorityMultiSigRedeemScript()
-		if err != nil {
-			return cli.NewExitError(fmt.Errorf("can't create committee multi-sig script: %w", err), 1)
+		if committee.Len() == 1 {
+			isMulti = false
+			for _, acc := range wall.Accounts {
+				if acc.Address == committeeAddr {
+					signers = append(signers, acc)
+					break
+				}
+			}
+
+		} else {
+			isMulti = true
+			pks = &committee
+			m = keys.GetMajorityHonestNodeCount(pks.Len())
+			script, err = committee.CreateMajorityMultiSigRedeemScript()
+			if err != nil {
+				return cli.NewExitError(fmt.Errorf("can't create committee multi-sig script: %w", err), 1)
+			}
 		}
+
+	}
+	if len(signers) == 0 {
+		return cli.NewExitError("can't find account to sign", 1)
 	}
 	if isMulti {
 		if pks == nil {
@@ -746,7 +727,9 @@ func MakeNeoTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to co
 	} else {
 		script = signers[0].Script
 	}
-
+	if len(signers) == 0 {
+		return cli.NewExitError("can't find account to sign", 1)
+	}
 	for _, acc := range signers {
 		pass, err := input.ReadPassword(fmt.Sprintf("Enter %s password > ", acc.Address))
 		if err != nil {
@@ -765,7 +748,7 @@ func MakeNeoTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to co
 	if err != nil {
 		return cli.NewExitError(fmt.Errorf("failed get fee per byte: %w", err), 1)
 	}
-	t := &transaction.SaiyaTx{
+	t := &transaction.SaiTx{
 		Nonce:    nonce,
 		GasPrice: gasPrice,
 		Gas:      0,
@@ -817,11 +800,69 @@ func MakeNeoTx(ctx *cli.Context, wall *wallet.Wallet, from common.Address, to co
 			return nil
 		}
 	}
-	b, err := tx.SaiyaTx.Bytes()
+	b, err := tx.SaiTx.Bytes()
 	if err != nil {
 		return cli.NewExitError(fmt.Errorf("failed encode tx to bytes: %w", err), 1)
 	}
 	hash, err := c.SendRawTransaction(b)
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("failed relay tx: %w", err), 1)
+	}
+	fmt.Fprintf(ctx.App.Writer, "TxHash: %s\n", hash)
+	return nil
+}
+
+func MakeEthTx(ctx *cli.Context, facc *wallet.Account, to *common.Address, value *big.Int, data []byte) error {
+	var err error
+	gctx, cancel := options.GetTimeoutContext(ctx)
+	defer cancel()
+	c, err := options.GetRPCClient(gctx, ctx)
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	chainId, err := c.Eth_ChainId()
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("failed to get chainId: %w", err), 1)
+	}
+	gasPrice, err := c.Eth_GasPrice()
+	if err != nil {
+		return cli.NewExitError(err, 1)
+	}
+	nonce, err := c.Eth_GetTransactionCount(facc.Address)
+	if err != nil {
+		return err
+	}
+	ltx := &types.LegacyTx{
+		Nonce:    nonce,
+		To:       to,
+		GasPrice: gasPrice,
+		Value:    value,
+		Data:     data,
+	}
+	tx := &transaction.EthTx{
+		Transaction: *types.NewTx(ltx),
+	}
+	gas, err := c.Eth_EstimateGas(&result.TransactionObject{
+		From:     facc.Address,
+		To:       tx.To(),
+		GasPrice: tx.GasPrice(),
+		Value:    tx.Value(),
+		Data:     tx.Data(),
+	})
+	if err != nil {
+		return err
+	}
+	ltx.Gas = gas
+	tx.Transaction = *types.NewTx(ltx)
+	err = facc.SignTx(chainId, transaction.NewTx(tx))
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("can't sign tx: %w", err), 1)
+	}
+	b, err := tx.Transaction.MarshalBinary()
+	if err != nil {
+		return cli.NewExitError(fmt.Errorf("failed encode tx to bytes: %w", err), 1)
+	}
+	hash, err := c.Eth_SendRawTransaction(b)
 	if err != nil {
 		return cli.NewExitError(fmt.Errorf("failed relay tx: %w", err), 1)
 	}

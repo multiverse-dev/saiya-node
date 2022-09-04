@@ -27,7 +27,6 @@ type Blockchainer interface {
 	GetConfig() config.ProtocolConfiguration
 	Close()
 	Contracts() *native.Contracts
-	InitVerificationContext(hash common.Address, witness *transaction.Witness) error
 	IsTxStillRelevant(t *transaction.Transaction, txpool *mempool.Pool, isPartialTx bool) bool
 	HeaderHeight() uint32
 	GetBlock(hash common.Hash, full bool) (*block.Block, error)

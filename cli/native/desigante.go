@@ -59,13 +59,5 @@ func designate(ctx *cli.Context, role noderoles.Role) error {
 	if newCommittees.Len() > native.MaxNodeCount {
 		return cli.NewExitError(fmt.Errorf("too many public keys"), 1)
 	}
-	dabi, err := getNativeContract(ctx, nativenames.Designation)
-	if err != nil {
-		return err
-	}
-	data, err := dabi.Pack("designateAsRole", uint8(role), (&newCommittees).Bytes())
-	if err != nil {
-		return cli.NewExitError(fmt.Errorf("can't pack parameters: %w", err), 1)
-	}
-	return makeCommitteeTx(ctx, native.DesignationAddress, data)
+	return callNative(ctx, nativenames.Designation, "designateAsRole", uint8(role), (&newCommittees).Bytes())
 }

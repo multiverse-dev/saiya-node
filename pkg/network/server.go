@@ -547,10 +547,13 @@ func (s *Server) handlePing(p Peer, ping *payload.Ping) error {
 }
 
 func (s *Server) requestBlocksOrHeaders(p Peer) error {
-	if s.chain.HeaderHeight() < p.LastBlockIndex() {
-		return s.requestHeaders(p)
-	}
 	bq := s.chain
+	if bq.HeaderHeight() < p.LastBlockIndex() {
+		err := s.requestHeaders(p)
+		if err != nil {
+			return err
+		}
+	}
 	if bq.BlockHeight() >= p.LastBlockIndex() {
 		return nil
 	}
@@ -851,9 +854,10 @@ func (s *Server) handleGetAddrCmd(p Peer) error {
 // requestBlocks sends a CMDGetBlockByIndex message to the peer
 // to sync up in blocks. A maximum of maxBlockBatch will
 // send at once. Two things we need to take care of:
-// 1. If possible, blocks should be fetched in parallel.
-//    height..+500 to one peer, height+500..+1000 to another etc.
-// 2. Every block must eventually be fetched even if peer sends no answer.
+//  1. If possible, blocks should be fetched in parallel.
+//     height..+500 to one peer, height+500..+1000 to another etc.
+//  2. Every block must eventually be fetched even if peer sends no answer.
+//
 // Thus the following algorithm is used:
 // 1. Block range is divided into chunks of payload.MaxHashesCount.
 // 2. Send requests for chunk in increasing order.

@@ -14,7 +14,6 @@ import (
 	"github.com/multiverse-dev/saiya/pkg/core/native/noderoles"
 	"github.com/multiverse-dev/saiya/pkg/core/storage"
 	"github.com/multiverse-dev/saiya/pkg/crypto/keys"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -74,7 +73,7 @@ func TestCommitteeRole(t *testing.T) {
 	}
 	err = des.ContractCall_initialize(ic)
 	assert.NoError(t, err)
-	ks, err := des.GetDesignatedByRole(dao, noderoles.Committee, 1)
+	ks, _, err := des.GetDesignatedByRole(dao, noderoles.Committee, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, ks.Len())
 	assert.Equal(t, "023c4d39a3fd2150407a9d4654430cdce0464eccaaf739eea79d63e2862f989ee6", hex.EncodeToString(ks[0].Bytes()))
@@ -87,10 +86,10 @@ func TestCommitteeRole(t *testing.T) {
 	ic.Index = 1
 	err = des.designateAsRole(ic, noderoles.Committee, keys.PublicKeys{k2})
 	assert.NoError(t, err)
-	ks, err = des.GetDesignatedByRole(dao, noderoles.Committee, 1)
+	ks, _, err = des.GetDesignatedByRole(dao, noderoles.Committee, 1)
 	assert.NoError(t, err)
 	assert.Equal(t, "023c4d39a3fd2150407a9d4654430cdce0464eccaaf739eea79d63e2862f989ee6", hex.EncodeToString(ks[0].Bytes()))
-	ks, err = des.GetDesignatedByRole(dao, noderoles.Committee, 3)
+	ks, _, err = des.GetDesignatedByRole(dao, noderoles.Committee, 3)
 	assert.NoError(t, err)
 	assert.Equal(t, "0218cbadb9db833a6b7432a920b6bdb6b822eb2df0d59cfc5d9d590d5dfd97fef4", hex.EncodeToString(ks[0].Bytes()))
 	// - - - - - - - - - - - - -
@@ -101,10 +100,10 @@ func TestCommitteeRole(t *testing.T) {
 	ic.Index = 102
 	err = des.designateAsRole(ic, noderoles.Committee, keys.PublicKeys{k1, k2})
 	assert.NoError(t, err)
-	ks, err = des.GetDesignatedByRole(dao, noderoles.Committee, 101)
+	ks, _, err = des.GetDesignatedByRole(dao, noderoles.Committee, 101)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, ks.Len())
-	ks, err = des.GetDesignatedByRole(dao, noderoles.Committee, 104)
+	ks, _, err = des.GetDesignatedByRole(dao, noderoles.Committee, 104)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, ks.Len())
 }
@@ -144,7 +143,7 @@ func TestDesignateContractCall(t *testing.T) {
 	assert.Equal(t, common.BytesToHash([]byte{byte(noderoles.Committee)}), ic.L[0].Topics[1])
 	assert.Equal(t, ks.Bytes(), ic.L[0].Data)
 
-	ks, err = des.GetDesignatedByRole(dao, noderoles.Committee, 2)
+	ks, _, err = des.GetDesignatedByRole(dao, noderoles.Committee, 2)
 	assert.NoError(t, err)
 	assert.Equal(t, "0218cbadb9db833a6b7432a920b6bdb6b822eb2df0d59cfc5d9d590d5dfd97fef4", hex.EncodeToString(ks[0].Bytes()))
 }

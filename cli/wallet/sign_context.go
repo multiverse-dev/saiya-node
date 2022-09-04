@@ -18,7 +18,7 @@ import (
 
 type SignContext struct {
 	ChainID    uint64
-	Tx         transaction.SaiyaTx
+	Tx         transaction.SaiTx
 	Parameters map[string][]byte
 	M          int
 }
@@ -82,7 +82,7 @@ func (sc *SignContext) CreateTx() (*transaction.Transaction, error) {
 
 type signContextJson struct {
 	ChainID    hexutil.Uint64           `json:"chainId"`
-	Tx         transaction.SaiyaTx      `json:"tx"`
+	Tx         transaction.SaiTx        `json:"tx"`
 	M          hexutil.Uint64           `json:"m"`
 	Parameters map[string]hexutil.Bytes `json:"parameters"`
 }
@@ -138,6 +138,9 @@ func Sign(wall *wallet.Wallet, context *SignContext) error {
 				}
 				sig := acc.PrivateKey().SignHashable(context.ChainID, &context.Tx)
 				context.Parameters[hex.EncodeToString(p.Bytes())] = sig
+				if len(context.Parameters) == context.M {
+					return nil
+				}
 			}
 		}
 	}

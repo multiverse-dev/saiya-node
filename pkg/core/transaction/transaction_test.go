@@ -6,36 +6,37 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/multiverse-dev/saiya/pkg/io"
+	nio "github.com/multiverse-dev/saiya/pkg/io"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSize(t *testing.T) {
-	tx := &SaiyaTx{
+	tx := &SaiTx{
 		Nonce: 0,
 		Data:  []byte{},
 	}
-	d, _ := io.ToByteArray(tx)
+	d, _ := nio.ToByteArray(tx)
 	assert.Equal(t, 120, len(d))
 	assert.Equal(t, 120, tx.Size())
 }
 
 func TestEthTxDecode(t *testing.T) {
 	s := "f868800182d6d8946cb3e9d55dc87d4586bd2e558a1ee46a94e300b4880de0b6b3a764000080818da0ccd99c35f99317a094d99a8b677acb495dda3402e8aa45f91c524dea9aeb4c7ba02e5fffeedca5c7e4bbc7f36f16e94d1f85daf0ed0cd036187aa9c564708ce220"
-	d, err := hex.DecodeString(s)
+	ds, err := hex.DecodeString(s)
 	assert.NoError(t, err)
 	tx := &types.LegacyTx{}
-	err = rlp.DecodeBytes(d, tx)
+	err = rlp.DecodeBytes(ds, tx)
 	assert.NoError(t, err)
-	d, err = json.Marshal(tx)
+	d, err := json.Marshal(tx)
 	assert.NoError(t, err)
 	t.Log(string(d))
 	txx := &types.LegacyTx{}
-	bss := append(d, 1)
-	reader := io.NewBinReaderFromBuf(bss)
+	bss := append(ds, 1)
+	reader := nio.NewBinReaderFromBuf(bss)
 	err = rlp.Decode(reader, txx)
 	assert.NoError(t, err)
 	b := reader.ReadB()
@@ -49,11 +50,6 @@ func TestHexutil(t *testing.T) {
 	t.Log(n)
 }
 
-func TestNewTx(t *testing.T) {
-	tx := &types.LegacyTx{}
-	_ = NewTx(tx)
-}
-
 func TestNetFee(t *testing.T) {
 	s := "f868800182d6d8946cb3e9d55dc87d4586bd2e558a1ee46a94e300b4880de0b6b3a764000080818da0ccd99c35f99317a094d99a8b677acb495dda3402e8aa45f91c524dea9aeb4c7ba02e5fffeedca5c7e4bbc7f36f16e94d1f85daf0ed0cd036187aa9c564708ce220"
 	d, err := hex.DecodeString(s)
@@ -61,7 +57,9 @@ func TestNetFee(t *testing.T) {
 	ltx := &types.LegacyTx{}
 	err = rlp.DecodeBytes(d, ltx)
 	assert.NoError(t, err)
-	tx := NewTx(ltx)
+	ethtx, err := NewEthTx(types.NewTx(ltx))
+	assert.NoError(t, err)
+	tx := NewTx(ethtx)
 	actual := uint64(tx.Size()) * 1
 	cal := CalculateNetworkFee(tx, 1)
 	siglen := RlpSize(ltx.R) + RlpSize(ltx.S) + RlpSize(ltx.V)
@@ -76,13 +74,14 @@ func TestNetFee(t *testing.T) {
 }
 
 func TestEncodeLegacy(t *testing.T) {
-	tx := NewTx(&types.LegacyTx{})
-	b, err := io.ToByteArray(tx)
+	tx := NewTx(&EthTx{
+		Transaction: *types.NewTx(&types.LegacyTx{}),
+	})
+	b, err := nio.ToByteArray(tx)
 	assert.NoError(t, err)
 	txx := &Transaction{}
-	err = io.FromByteArray(txx, b)
-	assert.NoError(t, err)
-	assert.Equal(t, EthLegacyTxType, txx.Type)
+	err = nio.FromByteArray(txx, b)
+	assert.Error(t, err)
 }
 
 func TestCancel(t *testing.T) {
@@ -99,10 +98,35 @@ func TestCancel(t *testing.T) {
 	err = rlp.DecodeBytes(b2, t2)
 	assert.NoError(t, err)
 	assert.Equal(t, t1.Nonce, t2.Nonce)
-	b1, err = marshlJSON(t1)
+	etx1, err := NewEthTx(types.NewTx(t1))
+	assert.NoError(t, err)
+	b1, err = json.Marshal(etx1)
 	assert.NoError(t, err)
 	fmt.Println(string(b1))
-	b2, err = marshlJSON(t2)
+	etx2, err := NewEthTx(types.NewTx(t2))
+	assert.NoError(t, err)
+	b2, err = json.Marshal(etx2)
 	assert.NoError(t, err)
 	fmt.Println(string(b2))
+}
+
+func TestJson(t *testing.T) {
+	ltx := &types.LegacyTx{
+		Nonce: 1,
+		Data:  []byte{1},
+		To:    &common.Address{},
+	}
+	tx := types.NewTx(ltx)
+	etx := &EthTx{
+		Transaction: *tx,
+	}
+	txx := NewTx(etx)
+	b, err := json.Marshal(txx)
+	assert.NoError(t, err)
+	t.Log(string(b))
+	txxx := new(Transaction)
+	err = json.Unmarshal(b, txxx)
+	assert.NoError(t, err)
+	assert.Equal(t, EthTxType, txxx.Type)
+	assert.Equal(t, types.LegacyTxType, int(txxx.EthTx.Type()))
 }

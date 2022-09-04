@@ -91,7 +91,7 @@ func (s *service) signAndSend(r *state.MPTRoot) error {
 		Category:        Category,
 		ValidBlockStart: r.Index,
 		ValidBlockEnd:   r.Index + voteValidEndInc,
-		Sender:          acc.PrivateKey().GetScriptHash(),
+		Sender:          acc.Address,
 		Data:            w.Bytes(),
 		Witness:         transaction.Witness{},
 	}

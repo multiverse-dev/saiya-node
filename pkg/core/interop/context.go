@@ -61,8 +61,8 @@ func NewContext(block *block.Block, tx *transaction.Transaction, sdb *statedb.St
 				nativeContract: chain.Contracts().Policy,
 				ic:             ctx,
 			},
-			native.SAIAddress: nativeWrapper{
-				nativeContract: chain.Contracts().SAI,
+			native.SaiAddress: nativeWrapper{
+				nativeContract: chain.Contracts().Sai,
 				ic:             ctx,
 			},
 			native.ManagementAddress: nativeWrapper{

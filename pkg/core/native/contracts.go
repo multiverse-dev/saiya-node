@@ -10,9 +10,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/multiverse-dev/saiya/pkg/config"
+	"github.com/multiverse-dev/saiya/pkg/core/block"
 	"github.com/multiverse-dev/saiya/pkg/core/dao"
 	"github.com/multiverse-dev/saiya/pkg/core/state"
-	"github.com/multiverse-dev/saiya/pkg/dbft/block"
 )
 
 const (
@@ -36,7 +36,7 @@ var (
 )
 
 type Contracts struct {
-	SAI        *SAI
+	Sai        *Sai
 	Ledger     *Ledger
 	Designate  *Designate
 	Management *Management
@@ -48,8 +48,8 @@ func NewContracts(cfg config.ProtocolConfiguration) *Contracts {
 	cs := &Contracts{
 		Contracts: make([]state.NativeContract, 0, 4),
 	}
-	cs.SAI = NewSAI(cs, cfg.InitialSAISupply)
-	cs.Contracts = append(cs.Contracts, cs.SAI.NativeContract)
+	cs.Sai = NewSai(cs, cfg.InitialSaiSupply)
+	cs.Contracts = append(cs.Contracts, cs.Sai.NativeContract)
 	cs.Ledger = NewLedger()
 	cs.Contracts = append(cs.Contracts, cs.Ledger.NativeContract)
 	cs.Management = NewManagement(cs)
@@ -71,8 +71,16 @@ func (cs *Contracts) ByName(name string) *state.NativeContract {
 	return nil
 }
 
-func (cs *Contracts) OnPersist(d *dao.Simple, block *block.Block) {
-	cs.SAI.OnPersist(d, block)
+func (cs *Contracts) OnPersist(d *dao.Simple, block *block.Block) error {
+	return cs.Sai.OnPersist(d, block)
+}
+
+func (cs *Contracts) PostPersist(d *dao.Simple, block *block.Block) error {
+	err := cs.Designate.PostPersist(d, block)
+	if err != nil {
+		return err
+	}
+	return cs.Policy.PostPersist(d, block)
 }
 
 func convertType(in reflect.Type) (abi.Type, error) {

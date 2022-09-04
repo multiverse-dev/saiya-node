@@ -1,7 +1,7 @@
 ProtocolConfiguration:
   ChainID: 253
   MaxTraceableBlocks: 200000
-  InitialSAIYASupply: 100000000
+  InitialSaiSupply: 100000000
   KeepOnlyLatestState: false
   MaxBlockSize: 262144
   MaxBlockGas: 900000000000
@@ -12,7 +12,7 @@ ProtocolConfiguration:
   StandbyCommittee:
     - 03b426e8ead09fc034f0b74becd3a4db682782c36b437ce2a7b96464b26d76d181
   SeedList:
-    - 127.0.0.1:20303
+    - 127.0.0.1:20333
   VerifyBlocks: true
   VerifyTransactions: false
 
@@ -27,7 +27,7 @@ ApplicationConfiguration:
   #      FilePath: "./chains/privnet.bolt"
   #  Uncomment in order to set up custom address for node.
   #  Address: 127.0.0.1
-  NodePort: 20303
+  NodePort: 20333
   Relay: true
   DialTimeout: 3
   ProtoTickInterval: 2
@@ -39,11 +39,16 @@ ApplicationConfiguration:
   UnlockWallet:
     Path: "/wallet.json"
     Password: "pass"
+  StateRoot:
+    Enabled: false
+    UnlockWallet:
+      Path: ""
+      Password: ""
   RPC:
     Enabled: true
     MaxGasInvoke: 15
     EnableCORSWorkaround: false
-    Port: 20302
+    Port: 20332
     TLSConfig:
       Enabled: false
       Port: 20301

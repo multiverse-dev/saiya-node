@@ -1,6 +1,6 @@
-extern crate libc;
 use bellman::groth16::{prepare_verifying_key, verify_proof, Proof, VerifyingKey};
 use bls12_381::Bls12;
+use libc;
 
 #[no_mangle]
 pub extern "C" fn verify(
@@ -16,7 +16,7 @@ pub extern "C" fn verify(
         let rvk = VerifyingKey::read(bkey);
         if let Ok(tvk) = rvk {
             let tpvk = prepare_verifying_key(&tvk);
-            let result = verify_proof(&tpvk, &tproof, &[bls12_381::Scalar::from(35u64)]);
+            let result = verify_proof(&tpvk, &tproof, &[]);
             return match result {
                 Err(_) => 0,
                 Ok(_) => 1,

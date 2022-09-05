@@ -1,9 +1,9 @@
 package zk
 
 /*
-#cgo LDFLAGS: -L./lib -lrustdemo -v
+#cgo LDFLAGS: -L./lib -lzk
 #include <stdlib.h>
-#include "./lib/rustdemo.h"
+#include "./lib/zk.h"
 */
 import "C"
 import "unsafe"

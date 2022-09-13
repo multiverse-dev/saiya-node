@@ -115,6 +115,7 @@ func newGraceContext() context.Context {
 	go func() {
 		<-stop
 		cancel()
+		signal.Reset(os.Interrupt)
 	}()
 	return ctx
 }
@@ -313,6 +314,9 @@ func restoreDB(ctx *cli.Context) error {
 	var start uint32
 	if ctx.Bool("incremental") {
 		start = reader.ReadU32LE()
+		if reader.Err != nil {
+			return cli.NewExitError(reader.Err, 1)
+		}
 		if chain.BlockHeight()+1 < start {
 			return cli.NewExitError(fmt.Errorf("expected height: %d, dump starts at %d",
 				chain.BlockHeight()+1, start), 1)
@@ -344,7 +348,7 @@ func restoreDB(ctx *cli.Context) error {
 		_ = dump.tryPersist(dumpDir, lastIndex)
 	}()
 
-	var f = func(b *block.Block) error {
+	var f = func(_ *block.Block) error {
 		select {
 		case <-gctx.Done():
 			return gctx.Err()

@@ -634,6 +634,11 @@ func sign(ctx *cli.Context) error {
 	if err != nil {
 		return cli.NewExitError(fmt.Errorf("failed encode tx: %w", err), 1)
 	}
+	err = input.ConfirmTx()
+	if err != nil {
+		fmt.Fprintln(ctx.App.Writer, hex.EncodeToString(b[1:]))
+		return cli.NewExitError(err, 1)
+	}
 	gctx, cancel := options.GetTimeoutContext(ctx)
 	defer cancel()
 	c, err := options.GetRPCClient(gctx, ctx)

@@ -125,9 +125,11 @@ func Sign(wall *wallet.Wallet, context *SignContext) error {
 	if err != nil {
 		return fmt.Errorf("can't parse multi-sig account script: %w", err)
 	}
+	haspk := false
 	for _, acc := range wall.Accounts {
 		for _, p := range *pks {
 			if p.Address() == acc.Address {
+				haspk = true
 				pass, err := input.ReadPassword(fmt.Sprintf("Enter password for %s > ", acc.Address))
 				if err != nil {
 					return fmt.Errorf("error reading password: %w", err)
@@ -143,6 +145,9 @@ func Sign(wall *wallet.Wallet, context *SignContext) error {
 				}
 			}
 		}
+	}
+	if !haspk {
+		return fmt.Errorf("no existent private key in wallet")
 	}
 	return nil
 }
